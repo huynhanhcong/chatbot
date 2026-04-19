@@ -1,0 +1,7 @@
+google-genai
+qdrant-client
+rank-bm25
+typer
+rich
+pydantic
+python-dotenv

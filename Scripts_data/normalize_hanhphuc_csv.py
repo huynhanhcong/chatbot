@@ -6,8 +6,9 @@ import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCTORS_PATH = ROOT / "hanhphuc_doctors.csv"
-PACKAGES_PATH = ROOT / "hanhphuc_goi_kham_merged_cleaned.csv"
+DATA_CRAWL_DIR = ROOT / "Data_crawl"
+DOCTORS_PATH = DATA_CRAWL_DIR / "hanhphuc_doctors.csv"
+PACKAGES_PATH = DATA_CRAWL_DIR / "hanhphuc_goi_kham_merged_cleaned.csv"
 
 ZERO_WIDTH_CHARS = "\u200b\u200c\u200d\ufeff"
 SECTION_TITLES = [

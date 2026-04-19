@@ -1,0 +1,39 @@
+{
+  "input": "C:\\Users\\08688\\Documents\\python\\Chatbot_0.1\\Data_Hug\\jsonl\\data_vietnamese-medical-combined.jsonl",
+  "output": "C:\\Users\\08688\\Documents\\python\\Chatbot_0.1\\Data_RAG\\retrieval\\vietnamese_medical_combined_chunks.jsonl",
+  "created_at": "2026-04-19",
+  "algorithm": {
+    "name": "structure_aware_vietnamese_medical_chunking",
+    "steps": [
+      "preserve user-assistant QA boundaries",
+      "split long answers by Vietnamese sentence boundaries",
+      "repeat question in each answer segment for standalone retrieval",
+      "add previous user context for multi-turn disambiguation",
+      "compact overly long question/context with head-tail retention",
+      "deduplicate exact normalized chunks by SHA1 fingerprint",
+      "extract lightweight lexical keywords for filtering/debugging"
+    ],
+    "max_chunk_words": 380,
+    "target_chunk_words": 300,
+    "overlap_words": 35,
+    "min_chunk_words": 18,
+    "max_question_context_words": 120,
+    "max_previous_context_words": 50
+  },
+  "stats": {
+    "input_records": 55814,
+    "output_chunks": 187288,
+    "records_without_chunks": 2,
+    "duplicates_skipped": 16,
+    "unique_fingerprints": 187288,
+    "input_record_types": {
+      "conversation": 46479,
+      "qa": 9335
+    },
+    "output_chunk_types": {
+      "conversation_qa": 177269,
+      "qa_answer": 8801,
+      "qa_answer_part": 1218
+    }
+  }
+}
