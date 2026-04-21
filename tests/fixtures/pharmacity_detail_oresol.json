@@ -1,0 +1,28 @@
+{
+  "data": {
+    "item": {
+      "sku": "P00219",
+      "slug": "thuoc-bu-nuoc-chat-dien-giai-bang-duong-uong-hieu-qua-oresol-245-20-goi-x-4-1g-hop",
+      "name": "Thuốc bột Oresol 245 DHG điều trị mất nước (20 gói x 4,1g)",
+      "brand_name": "DHG Pharma",
+      "product_type_name": "Thuốc không kê đơn",
+      "category_name": "Vitamin & Khoáng chất",
+      "is_prescription_drug": false,
+      "ingredients": ["Natri clorid 520mg", "Kali clorid 300mg"],
+      "short_description": "Hoạt chất: Natri clorid, kali clorid. Công dụng: điều trị mất nước.",
+      "long_description": "<p><strong>Chỉ định</strong></p><p>Dùng trong điều trị mất nước do tiêu chảy ở trẻ em và người lớn.</p><p><strong>Liều dùng và cách dùng</strong></p><p>Pha 1 gói vào 200 ml nước đun sôi để nguội.</p>",
+      "variants": [
+        {
+          "unit": "Goi",
+          "unit_name": "Gói",
+          "price": 1350
+        },
+        {
+          "unit": "Hop",
+          "unit_name": "Hộp",
+          "price": 27000
+        }
+      ]
+    }
+  }
+}

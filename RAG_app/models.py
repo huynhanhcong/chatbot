@@ -5,9 +5,12 @@ from pydantic import BaseModel, Field
 
 class RagDocument(BaseModel):
     id: str
+    parent_id: str | None = None
     entity_type: Literal["doctor", "package"]
     title: str
     category: str | None = None
+    chunk_type: str | None = None
+    price_vnd: int | None = None
     source_url: str
     text: str
     search_text: str
@@ -16,12 +19,15 @@ class RagDocument(BaseModel):
 
 class SearchResult(BaseModel):
     id: str
+    parent_id: str | None = None
     score: float
     vector_score: float = 0.0
     bm25_score: float = 0.0
     title: str
     entity_type: str
     category: str | None = None
+    chunk_type: str | None = None
+    price_vnd: int | None = None
     source_url: str | None = None
     text: str
     payload: dict[str, Any] = Field(default_factory=dict)

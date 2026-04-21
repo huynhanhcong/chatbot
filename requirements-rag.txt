@@ -5,3 +5,9 @@ typer
 rich
 pydantic
 python-dotenv
+fastapi
+uvicorn
+httpx
+beautifulsoup4
+pytest
+redis

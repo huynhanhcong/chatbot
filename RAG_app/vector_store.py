@@ -56,11 +56,14 @@ class QdrantVectorStore:
             results.append(
                 SearchResult(
                     id=payload.get("entity_id", str(getattr(point, "id", ""))),
+                    parent_id=payload.get("parent_id"),
                     score=score,
                     vector_score=score,
                     title=payload.get("title", ""),
                     entity_type=payload.get("entity_type", ""),
                     category=payload.get("category"),
+                    chunk_type=payload.get("chunk_type"),
+                    price_vnd=payload.get("price_vnd"),
                     source_url=payload.get("source_url"),
                     text=payload.get("text", ""),
                     payload=payload,

@@ -22,7 +22,12 @@ class RagPipeline:
         )
         self.bm25_store = BM25Store.load(settings.bm25_path)
 
-    def answer(self, question: str) -> RagAnswer:
+    def answer(
+        self,
+        question: str,
+        conversation_context: str | None = None,
+        original_question: str | None = None,
+    ) -> RagAnswer:
         intent = detect_intent(question)
         rewritten_query = self.gemini.rewrite_query(question, intent)
         candidates = hybrid_retrieve(
@@ -32,8 +37,18 @@ class RagPipeline:
             bm25_store=self.bm25_store,
         )
         reranked = self._rerank(question, candidates)
-        generated = self._generate(question, intent, reranked)
-        guarded = apply_guardrails(generated, question, has_context=bool(reranked))
+        generated = self._generate(
+            question=original_question or question,
+            retrieval_question=question,
+            intent=intent,
+            contexts=reranked,
+            conversation_context=conversation_context,
+        )
+        guarded = apply_guardrails(
+            generated,
+            original_question or question,
+            has_context=bool(reranked),
+        )
         return RagAnswer(
             answer=guarded,
             sources=build_sources(reranked),
@@ -51,22 +66,37 @@ class RagPipeline:
         reranked = [by_id[result_id] for result_id in ordered_ids if result_id in by_id]
         return reranked or candidates[:top_k]
 
-    def _generate(self, question: str, intent: str, contexts: list[SearchResult]) -> str:
+    def _generate(
+        self,
+        question: str,
+        retrieval_question: str,
+        intent: str,
+        contexts: list[SearchResult],
+        conversation_context: str | None = None,
+    ) -> str:
         if not contexts:
             return ""
         context_text = "\n\n".join(
             f"[{index}] {item.title} ({item.entity_type})\nURL: {item.source_url}\n{item.text[:2500]}"
             for index, item in enumerate(contexts, start=1)
         )
+        history_block = (
+            f"LICH_SU_HOI_THOAI:\n{conversation_context}\n\n"
+            if conversation_context and conversation_context.strip()
+            else ""
+        )
         prompt = (
             "Bạn là trợ lý RAG cho Bệnh viện Đa khoa Quốc tế Hạnh Phúc.\n"
             "Quy tắc bắt buộc:\n"
             "- Chỉ trả lời dựa trên CONTEXT.\n"
+            "- Dùng LICH_SU_HOI_THOAI chỉ để hiểu đại từ, chủ đề và câu hỏi tiếp nối.\n"
             "- Nếu CONTEXT không có thông tin, nói rõ chưa có thông tin trong dữ liệu hiện tại.\n"
             "- Không chẩn đoán chắc chắn, không kê đơn, không tự thêm giá/dịch vụ ngoài context.\n"
             "- Trả lời ngắn gọn, rõ ràng, tiếng Việt.\n\n"
             f"Intent: {intent}\n"
-            f"Câu hỏi: {question}\n\n"
+            f"Câu hỏi người dùng: {question}\n"
+            f"Câu hỏi độc lập dùng để truy xuất: {retrieval_question}\n\n"
+            f"{history_block}"
             f"CONTEXT:\n{context_text}\n\n"
             "Câu trả lời:"
         )

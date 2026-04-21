@@ -61,11 +61,14 @@ class BM25Store:
             results.append(
                 SearchResult(
                     id=payload["entity_id"],
+                    parent_id=payload.get("parent_id"),
                     score=float(score) / max_score,
                     bm25_score=float(score) / max_score,
                     title=payload["title"],
                     entity_type=payload["entity_type"],
                     category=payload.get("category"),
+                    chunk_type=payload.get("chunk_type"),
+                    price_vnd=payload.get("price_vnd"),
                     source_url=payload.get("source_url"),
                     text=payload["text"],
                     payload=payload,
