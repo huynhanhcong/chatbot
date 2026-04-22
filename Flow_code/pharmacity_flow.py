@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 import re
+import time
 from typing import Any, Protocol
 
 from RAG_app.config import load_settings
 
+from .cached_pharmacity_client import CachedPharmacityClient
+from .drug_extraction import extract_drug_name_local
+from .drug_summary import answer_product_follow_up_template, render_product_summary
 from .gemini_assistant import GeminiDrugAssistant, normalize_text
 from .models import ProductDetail, ProductOption
 from .pharmacity_client import PharmacityApiClient
@@ -21,6 +26,9 @@ class FlowNotFoundError(RuntimeError):
 
 class FlowDependencyError(RuntimeError):
     pass
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class PharmacitySearchClient(Protocol):
@@ -55,7 +63,7 @@ class PharmacityFlow:
         session_store: InMemorySessionStore | None = None,
         max_options: int = 4,
     ) -> None:
-        self.client = client or PharmacityApiClient()
+        self.client = client or self._build_default_client()
         self.assistant = assistant or self._build_default_assistant()
         self.session_store = session_store or InMemorySessionStore()
         self.max_options = max_options
@@ -91,11 +99,16 @@ class PharmacityFlow:
         if session and session.selected_detail is not None:
             return self._answer_follow_up(session=session, question=message)
 
-        drug_name = self.assistant.extract_drug_name(message)
+        started_at = time.perf_counter()
+        drug_name = extract_drug_name_local(message)
+        if not drug_name:
+            drug_name = self.assistant.extract_drug_name(message)
+            _log_latency("pharmacity_llm_extract", started_at)
         if not drug_name:
             raise FlowValidationError("Could not detect a drug name from message.")
 
         options = self.client.search_products(drug_name, max_options=self.max_options)
+        _log_latency("pharmacity_search", started_at, option_count=len(options))
         session = self.session_store.save_search(
             drug_name=drug_name,
             options=options,
@@ -146,11 +159,10 @@ class PharmacityFlow:
     ) -> dict[str, Any]:
         session = self._require_session(conversation_id)
         option = self._resolve_option(session, selected_index, selected_sku)
+        started_at = time.perf_counter()
         detail = self.client.fetch_product_detail(option)
-        try:
-            answer = self.assistant.summarize_product(detail)
-        except RuntimeError as exc:
-            raise FlowDependencyError(str(exc)) from exc
+        _log_latency("pharmacity_detail", started_at)
+        answer = render_product_summary(detail)
         self.session_store.save_selected_detail(
             conversation_id=session.conversation_id,
             selected_detail=detail,
@@ -169,15 +181,19 @@ class PharmacityFlow:
     def _answer_follow_up(self, session: SearchSession, question: str) -> dict[str, Any]:
         if session.selected_detail is None:
             raise FlowValidationError("No selected product in current conversation.")
-        previous_context = format_drug_history(session) or session.last_answer
-        try:
-            answer = self.assistant.answer_follow_up(
-                detail=session.selected_detail,
-                question=question,
-                previous_answer=previous_context,
-            )
-        except RuntimeError as exc:
-            raise FlowDependencyError(str(exc)) from exc
+        templated_answer = answer_product_follow_up_template(session.selected_detail, question)
+        if templated_answer:
+            answer = templated_answer
+        else:
+            previous_context = format_drug_history(session) or session.last_answer
+            try:
+                answer = self.assistant.answer_follow_up(
+                    detail=session.selected_detail,
+                    question=question,
+                    previous_answer=previous_context,
+                )
+            except RuntimeError as exc:
+                raise FlowDependencyError(str(exc)) from exc
         self.session_store.save_selected_detail(
             conversation_id=session.conversation_id,
             selected_detail=session.selected_detail,
@@ -218,6 +234,14 @@ class PharmacityFlow:
                 f"selected_index must be between 1 and {len(session.options)}."
             )
         return session.options[selected_index - 1]
+
+    def _build_default_client(self) -> PharmacitySearchClient:
+        settings = load_settings()
+        return CachedPharmacityClient(
+            api_client=PharmacityApiClient(timeout_seconds=6.0),
+            index_path=settings.pharmacity_index_path,
+            cache_ttl_seconds=settings.cache_ttl_seconds,
+        )
 
     def _build_default_assistant(self) -> DrugAssistant:
         try:
@@ -271,3 +295,9 @@ def _parse_text_selection(message: str) -> int | None:
         return int(explicit_match.group(1))
 
     return None
+
+
+def _log_latency(event: str, started_at: float, **fields: object) -> None:
+    elapsed_ms = (time.perf_counter() - started_at) * 1000
+    suffix = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("%s latency_ms=%.2f %s", event, elapsed_ms, suffix)

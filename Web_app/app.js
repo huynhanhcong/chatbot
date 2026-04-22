@@ -151,6 +151,9 @@ function appendProductOptions(options) {
   options.slice(0, 4).forEach((option) => {
     const item = document.createElement("article");
     item.className = "product-option";
+    item.tabIndex = 0;
+    item.setAttribute("role", "button");
+    item.setAttribute("aria-label", `Chọn ${option.name || "sản phẩm"}`);
 
     const media = document.createElement("div");
     media.className = "product-media";
@@ -189,21 +192,21 @@ function appendProductOptions(options) {
     }
     content.append(meta);
 
-    const button = document.createElement("button");
-    button.className = "select-button";
-    button.type = "button";
-    button.textContent = "Chọn";
-    button.addEventListener("click", async () => {
-      disableOptionButtons(list);
-      await sendChat({
-        message: String(option.index),
-        selectedIndex: option.index,
-        selectedSku: option.sku,
-        displayUser: true,
-      });
+    item.addEventListener("click", async (event) => {
+      if (event.target instanceof Element && event.target.closest("a")) {
+        return;
+      }
+      await selectProductOption(list, item, option);
+    });
+    item.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      await selectProductOption(list, item, option);
     });
 
-    item.append(media, content, button);
+    item.append(media, content);
     list.append(item);
   });
 
@@ -344,9 +347,24 @@ function appendMeta(parent, value) {
   parent.append(span);
 }
 
-function disableOptionButtons(container) {
-  container.querySelectorAll("button").forEach((button) => {
-    button.disabled = true;
+async function selectProductOption(list, item, option) {
+  if (item.getAttribute("aria-disabled") === "true") {
+    return;
+  }
+  disableProductOptions(list);
+  item.classList.add("selected");
+  await sendChat({
+    message: String(option.index),
+    selectedIndex: option.index,
+    selectedSku: option.sku,
+    displayUser: true,
+  });
+}
+
+function disableProductOptions(container) {
+  container.querySelectorAll(".product-option").forEach((item) => {
+    item.setAttribute("aria-disabled", "true");
+    item.tabIndex = -1;
   });
 }
 

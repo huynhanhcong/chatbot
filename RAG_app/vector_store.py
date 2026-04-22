@@ -4,14 +4,14 @@ from .models import RagDocument, SearchResult
 
 
 class QdrantVectorStore:
-    def __init__(self, url: str, collection: str, path: str | None = None):
+    def __init__(self, url: str, collection: str, path: str | None = None, client: object | None = None):
         try:
             from qdrant_client import QdrantClient
         except ImportError as exc:
             raise RuntimeError("Missing dependency: install qdrant-client from requirements-rag.txt.") from exc
 
         self.collection = collection
-        self.client = QdrantClient(path=path) if path else QdrantClient(url=url)
+        self.client = client or (QdrantClient(path=path) if path else QdrantClient(url=url))
 
     def recreate_collection(self, vector_size: int) -> None:
         from qdrant_client import models

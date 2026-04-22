@@ -16,3 +16,4 @@ transcript.txt
 
 Data_Hug/
 Data_RAG/retrieval/vietnamese_medical_combined_chunks.jsonl
+Data_RAG/index/pharmacity_products.sqlite*

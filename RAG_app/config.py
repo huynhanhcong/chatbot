@@ -30,6 +30,7 @@ class Settings:
     router_llm_enabled: bool
     reranker_provider: str
     cache_ttl_seconds: int
+    pharmacity_index_path: Path
 
 
 def load_settings() -> Settings:
@@ -56,10 +57,14 @@ def load_settings() -> Settings:
         gemini_embedding_model=os.getenv("GEMINI_EMBEDDING_MODEL", "gemini-embedding-001"),
         redis_url=os.getenv("REDIS_URL"),
         use_redis=_env_bool("USE_REDIS", default=False),
-        rag_use_chunk_index=_env_bool("RAG_USE_CHUNK_INDEX", default=False),
+        rag_use_chunk_index=_env_bool("RAG_USE_CHUNK_INDEX", default=True),
         router_llm_enabled=_env_bool("ROUTER_LLM_ENABLED", default=False),
-        reranker_provider=os.getenv("RERANKER_PROVIDER", "llm"),
+        reranker_provider=os.getenv("RERANKER_PROVIDER", "rrf_mmr"),
         cache_ttl_seconds=int(os.getenv("CACHE_TTL_SECONDS", "900")),
+        pharmacity_index_path=_resolve_path(
+            os.getenv("PHARMACITY_INDEX_PATH"),
+            default=index_dir / "pharmacity_products.sqlite",
+        ),
     )
 
 
@@ -68,3 +73,10 @@ def _env_bool(name: str, *, default: bool) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_path(value: str | None, *, default: Path) -> Path:
+    if not value:
+        return default
+    path = Path(value)
+    return path if path.is_absolute() else ROOT / path

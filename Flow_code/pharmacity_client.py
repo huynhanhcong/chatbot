@@ -26,7 +26,7 @@ class PharmacityApiClient:
         self,
         base_url: str = BASE_URL,
         http_client: Any | None = None,
-        timeout_seconds: float = 30.0,
+        timeout_seconds: float = 6.0,
     ) -> None:
         self.base_url = base_url.rstrip("/") + "/"
         self._owns_http_client = http_client is None
