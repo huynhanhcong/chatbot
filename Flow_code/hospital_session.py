@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any, Callable
 
+from .redis_utils import create_redis_client, redis_get_json, redis_set_json
+
 
 @dataclass(frozen=True)
 class HospitalTurn:
@@ -136,6 +138,91 @@ class InMemoryHospitalSessionStore:
         self._sessions.pop(oldest_id, None)
 
 
+class RedisHospitalSessionStore:
+    def __init__(
+        self,
+        redis_url: str,
+        ttl_seconds: int = 30 * 60,
+        max_turns: int = 6,
+        max_summary_chars: int = 2200,
+        client: Any | None = None,
+        time_func: Callable[[], float] | None = None,
+    ) -> None:
+        self.ttl_seconds = ttl_seconds
+        self.max_turns = max_turns
+        self.max_summary_chars = max_summary_chars
+        self._time_func = time_func or time.monotonic
+        self._client = client or create_redis_client(redis_url)
+        self._prefix = "chatbot:hospital:"
+
+    def get_or_create(self, conversation_id: str | None = None) -> HospitalSession:
+        if conversation_id:
+            session = self.get(conversation_id)
+            if session is not None:
+                return session
+
+        session_id = conversation_id or str(uuid.uuid4())
+        session = HospitalSession(
+            conversation_id=session_id,
+            expires_at=self._time_func() + self.ttl_seconds,
+        )
+        self._save(session)
+        return session
+
+    def get(self, conversation_id: str | None) -> HospitalSession | None:
+        if not conversation_id:
+            return None
+        payload = redis_get_json(self._client, self._key(conversation_id))
+        if not isinstance(payload, dict):
+            return None
+        return _hospital_session_from_json(payload)
+
+    def save_turn(
+        self,
+        conversation_id: str,
+        question: str,
+        standalone_question: str,
+        answer: str,
+        sources: list[dict[str, Any]],
+    ) -> HospitalSession | None:
+        session = self.get(conversation_id)
+        if session is None:
+            return None
+
+        turn = HospitalTurn(
+            question=question,
+            standalone_question=standalone_question,
+            answer=answer,
+            sources=sources,
+            timestamp=self._time_func(),
+        )
+        session.turns.append(turn)
+        if len(session.turns) > self.max_turns:
+            overflow_count = len(session.turns) - self.max_turns
+            overflow = session.turns[:overflow_count]
+            session.summary = _merge_hospital_summary(
+                session.summary,
+                overflow,
+                max_chars=self.max_summary_chars,
+            )
+            del session.turns[:overflow_count]
+        session.expires_at = self._time_func() + self.ttl_seconds
+        self._save(session)
+        return session
+
+    def has_active_session(self, conversation_id: str | None) -> bool:
+        return self.get(conversation_id) is not None
+
+    def delete(self, conversation_id: str) -> None:
+        self._client.delete(self._key(conversation_id))
+
+    def _save(self, session: HospitalSession) -> None:
+        redis_set_json(self._client, self._key(session.conversation_id), session, self.ttl_seconds)
+
+    def _key(self, conversation_id: str) -> str:
+        return self._prefix + conversation_id
+
+
 def _merge_hospital_summary(
     existing: str,
     turns: list[HospitalTurn],
@@ -168,3 +255,22 @@ def _truncate(value: str, max_chars: int) -> str:
     if len(value) <= max_chars:
         return value
     return value[: max_chars - 13].rstrip() + " ...[rut gon]"
+
+
+def _hospital_turn_from_json(payload: dict[str, Any]) -> HospitalTurn:
+    return HospitalTurn(
+        question=str(payload.get("question") or ""),
+        standalone_question=str(payload.get("standalone_question") or ""),
+        answer=str(payload.get("answer") or ""),
+        sources=list(payload.get("sources") or []),
+        timestamp=float(payload.get("timestamp") or 0.0),
+    )
+
+
+def _hospital_session_from_json(payload: dict[str, Any]) -> HospitalSession:
+    return HospitalSession(
+        conversation_id=str(payload.get("conversation_id") or ""),
+        expires_at=float(payload.get("expires_at") or 0.0),
+        summary=str(payload.get("summary") or ""),
+        turns=[_hospital_turn_from_json(item) for item in payload.get("turns") or [] if isinstance(item, dict)],
+    )

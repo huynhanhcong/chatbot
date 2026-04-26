@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Medical Voice Chat</title>
+    <link rel="stylesheet" href="/voice/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="voice-panel" aria-label="Voice chatbot">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Medical voice assistant</p>
+            <h1>Há»i báº±ng giá»ng nÃ³i</h1>
+          </div>
+          <button id="newSessionButton" class="icon-button" type="button" title="PhiÃªn má»›i" aria-label="PhiÃªn má»›i">
+            â†»
+          </button>
+        </header>
+
+        <section class="status-strip" aria-live="polite">
+          <span id="statusDot" class="status-dot idle"></span>
+          <span id="statusText">Sáºµn sÃ ng</span>
+        </section>
+
+        <section id="messages" class="messages" aria-live="polite"></section>
+
+        <footer class="controls">
+          <button id="micButton" class="mic-button" type="button" aria-label="Báº­t microphone">
+            <span class="mic-icon">â—</span>
+          </button>
+          <div class="composer">
+            <input id="textFallback" type="text" autocomplete="off" placeholder="Nháº­p cÃ¢u há»i náº¿u trÃ¬nh duyá»‡t khÃ´ng há»— trá»£ giá»ng nÃ³i" />
+            <button id="sendTextButton" type="button">Gá»­i</button>
+          </div>
+        </footer>
+      </section>
+    </main>
+    <script src="/voice/static/app.js"></script>
+  </body>
+</html>

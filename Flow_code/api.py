@@ -10,10 +10,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from Flow_code.chat_orchestrator import ChatOrchestrator
-from Flow_code.conversation_memory import InMemoryConversationStore
-from Flow_code.dialogue_state import InMemoryDialogueStateStore
+from Flow_code.conversation_memory import InMemoryConversationStore, RedisConversationStore
+from Flow_code.dialogue_state import InMemoryDialogueStateStore, RedisDialogueStateStore
 from Flow_code.drug_service import DrugInfoService
-from Flow_code.hospital_session import InMemoryHospitalSessionStore
+from Flow_code.hospital_session import InMemoryHospitalSessionStore, RedisHospitalSessionStore
 from Flow_code.observability import ChatObserver
 from Flow_code.pharmacity_client import (
     PharmacityClientError,
@@ -26,6 +26,12 @@ from Flow_code.pharmacity_flow import (
     FlowValidationError,
     PharmacityFlow,
 )
+from Flow_code.pharmacity_export import (
+    DEFAULT_PHARMACITY_EXPORT_PATH,
+    DEFAULT_PHARMACITY_EXTRACTED_PATH,
+    clear_pharmacity_export_files,
+)
+from Flow_code.session_store import InMemorySessionStore, RedisSessionStore
 from Flow_code.router_service import (
     IntentRouter,
     RouteContext,
@@ -40,19 +46,54 @@ from RAG_app.config import ROOT, load_settings
 
 
 WEB_APP_DIR = ROOT / "Web_app"
+CHAT_VOICE_WEB_DIR = ROOT / "Chat_Voice" / "web"
 SPEED_LOG_PATHS = {"/chat", "/chat/drug-info"}
+PHARMACITY_EXPORT_PATHS = (
+    DEFAULT_PHARMACITY_EXPORT_PATH,
+    DEFAULT_PHARMACITY_EXTRACTED_PATH,
+)
 
 logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Medical Chatbot API", version="0.1.0")
 if WEB_APP_DIR.exists():
     app.mount("/static", StaticFiles(directory=WEB_APP_DIR), name="static")
+if CHAT_VOICE_WEB_DIR.exists():
+    app.mount("/voice/static", StaticFiles(directory=CHAT_VOICE_WEB_DIR), name="voice-static")
 
 _flow: PharmacityFlow | None = None
 _rag_pipeline: Any | None = None
-_conversations = InMemoryConversationStore()
-_hospital_sessions = InMemoryHospitalSessionStore()
-_dialogue_states = InMemoryDialogueStateStore()
+_settings = load_settings()
+
+
+def _build_conversation_store() -> Any:
+    if _settings.use_redis and _settings.redis_url:
+        return RedisConversationStore(_settings.redis_url)
+    return InMemoryConversationStore()
+
+
+def _build_hospital_session_store() -> Any:
+    if _settings.use_redis and _settings.redis_url:
+        return RedisHospitalSessionStore(_settings.redis_url)
+    return InMemoryHospitalSessionStore()
+
+
+def _build_dialogue_state_store() -> Any:
+    if _settings.use_redis and _settings.redis_url:
+        return RedisDialogueStateStore(_settings.redis_url)
+    return InMemoryDialogueStateStore()
+
+
+def _build_drug_session_store() -> Any:
+    if _settings.use_redis and _settings.redis_url:
+        return RedisSessionStore(_settings.redis_url)
+    return InMemorySessionStore()
+
+
+_conversations = _build_conversation_store()
+_hospital_sessions = _build_hospital_session_store()
+_dialogue_states = _build_dialogue_state_store()
+_drug_sessions = _build_drug_session_store()
 
 
 class ChatRequest(BaseModel):
@@ -108,7 +149,7 @@ async def log_response_speed(request: Request, call_next: Any) -> Response:
 def get_flow() -> PharmacityFlow:
     global _flow
     if _flow is None:
-        _flow = PharmacityFlow()
+        _flow = PharmacityFlow(session_store=_drug_sessions)
     return _flow
 
 
@@ -121,7 +162,7 @@ def get_rag_pipeline() -> Any:
     if _rag_pipeline is None:
         from RAG_app.pipeline import RagPipeline
 
-        _rag_pipeline = RagPipeline(load_settings())
+        _rag_pipeline = RagPipeline(_settings)
     return _rag_pipeline
 
 
@@ -159,6 +200,14 @@ def web_app() -> FileResponse:
     return _index_response()
 
 
+@app.get("/voice")
+def voice_app() -> FileResponse:
+    index_path = CHAT_VOICE_WEB_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Voice app not found.")
+    return FileResponse(index_path, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon() -> Response:
     return Response(status_code=204)
@@ -167,17 +216,18 @@ def favicon() -> Response:
 @app.post("/chat")
 def chat(payload: ChatRequest) -> dict[str, Any]:
     try:
+        _clear_pharmacity_exports_for_new_conversation(payload)
         return get_chat_orchestrator().handle(payload)
     except FlowNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FlowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (PharmacityNetworkError, PharmacityParsingError) as exc:
-        raise HTTPException(status_code=502, detail=f"Pharmacity API error: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Drug data provider error: {exc}") from exc
     except FlowDependencyError as exc:
         raise HTTPException(status_code=500, detail=f"Dependency error: {exc}") from exc
     except PharmacityClientError as exc:
-        raise HTTPException(status_code=500, detail=f"Pharmacity client error: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Drug information service error: {exc}") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -185,29 +235,39 @@ def chat(payload: ChatRequest) -> dict[str, Any]:
 @app.post("/chat/drug-info")
 def chat_drug_info(payload: DrugInfoRequest) -> dict[str, Any]:
     try:
+        _clear_pharmacity_exports_for_new_conversation(payload)
         return _call_pharmacity(payload)
     except FlowNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except FlowValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except (PharmacityNetworkError, PharmacityParsingError) as exc:
-        raise HTTPException(status_code=502, detail=f"Pharmacity API error: {exc}") from exc
+        raise HTTPException(status_code=502, detail=f"Drug data provider error: {exc}") from exc
     except FlowDependencyError as exc:
         raise HTTPException(status_code=500, detail=f"Dependency error: {exc}") from exc
     except PharmacityClientError as exc:
-        raise HTTPException(status_code=500, detail=f"Pharmacity client error: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Drug information service error: {exc}") from exc
 
 
 def _call_pharmacity(
     payload: ChatRequest,
     conversation_id: str | None = None,
 ) -> dict[str, Any]:
-    return get_drug_service().handle_raw(
+    return get_drug_service().handle_public(
         message=payload.message,
         conversation_id=conversation_id or payload.conversation_id,
         selected_index=payload.selected_index,
         selected_sku=payload.selected_sku,
     )
+
+
+def _clear_pharmacity_exports_for_new_conversation(payload: ChatRequest) -> None:
+    if payload.conversation_id:
+        return
+    try:
+        clear_pharmacity_export_files(PHARMACITY_EXPORT_PATHS)
+    except OSError as exc:
+        logger.warning("pharmacity_export_clear_failed error=%s", exc)
 
 
 def _should_route_to_pharmacity(payload: ChatRequest) -> bool:
@@ -261,7 +321,7 @@ def _index_response() -> FileResponse:
     index_path = WEB_APP_DIR / "index.html"
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="Web app not found.")
-    return FileResponse(index_path)
+    return FileResponse(index_path, headers={"Cache-Control": "no-store"})
 
 
 def _elapsed_ms(start_time: float) -> float:

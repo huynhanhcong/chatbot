@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from .text import clean_text
 
 
@@ -21,17 +23,23 @@ def has_medical_risk(query: str) -> bool:
 
 def apply_guardrails(answer: str, query: str, has_context: bool) -> str:
     if not has_context:
-        return (
+        base = (
             "Tôi chưa tìm thấy thông tin phù hợp trong dữ liệu Bệnh viện Hạnh Phúc hiện tại. "
-            "Vui lòng liên hệ trực tiếp bệnh viện để được xác nhận."
+            "Bạn vui lòng liên hệ trực tiếp bệnh viện để được xác nhận."
         )
+        if has_medical_risk(query):
+            return (
+                f"{base}\n\nNếu có triệu chứng nặng, diễn tiến nhanh hoặc tình huống cấp cứu, "
+                "hãy đến cơ sở y tế gần nhất hoặc liên hệ cấp cứu."
+            )
+        return base
 
     guarded = clean_text(answer)
-    disclaimer = (
-        "Thông tin này chỉ dùng để tham khảo và không thay thế tư vấn trực tiếp của bác sĩ."
-    )
-    if disclaimer.lower() not in guarded.lower():
-        guarded = f"{guarded}\n\n{disclaimer}"
+    if not guarded:
+        return (
+            "Tôi chưa tổng hợp được câu trả lời phù hợp từ dữ liệu hiện tại. "
+            "Bạn vui lòng thử hỏi rõ hơn hoặc liên hệ trực tiếp bệnh viện."
+        )
 
     if has_medical_risk(query):
         guarded = (

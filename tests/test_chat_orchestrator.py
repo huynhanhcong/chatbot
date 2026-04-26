@@ -36,12 +36,17 @@ class FakeFlow:
                     "detail_url": "https://www.pharmacity.vn/oresol-245.html",
                 },
                 "source_url": "https://www.pharmacity.vn/oresol-245.html",
+                "internal_grounding": {
+                    "provider": "pharmacity",
+                    "source_url": "https://www.pharmacity.vn/oresol-245.html",
+                },
             }
         return {
             "status": "need_selection",
             "conversation_id": conversation_id,
             "message": "Toi tim thay cac thuoc sau, ban muon hoi thuoc nao?",
             "options": [{"index": 1, "sku": "P00219", "name": "Thuoc bot Oresol 245 DHG"}],
+            "internal_grounding": {"provider": "pharmacity"},
         }
 
     def has_active_session(self, conversation_id: str | None) -> bool:
@@ -63,6 +68,23 @@ class FakeRagPipeline:
         )
 
 
+class MultiSourceRagPipeline:
+    def __init__(self) -> None:
+        self.questions: list[str] = []
+
+    def answer(self, question: str, **kwargs):
+        self.questions.append(question)
+        return SimpleNamespace(
+            answer=f"RAG answer: {question}",
+            sources=[
+                {"id": "doctor-a", "title": "Bac si A", "url": "https://example.test/a"},
+                {"id": "doctor-b", "title": "Bac si B", "url": "https://example.test/b"},
+            ],
+            confidence="high",
+            intent="doctor_search",
+        )
+
+
 def _payload(message: str, conversation_id: str | None = None, **kwargs):
     return SimpleNamespace(
         message=message,
@@ -75,9 +97,10 @@ def _payload(message: str, conversation_id: str | None = None, **kwargs):
 def _orchestrator(flow: FakeFlow | None = None, logger: logging.Logger | None = None):
     flow = flow or FakeFlow()
     states = InMemoryDialogueStateStore()
+    conversations = InMemoryConversationStore()
     return (
         ChatOrchestrator(
-            conversation_store=InMemoryConversationStore(),
+            conversation_store=conversations,
             hospital_session_store=InMemoryHospitalSessionStore(),
             dialogue_state_store=states,
             drug_service=DrugInfoService(
@@ -89,11 +112,12 @@ def _orchestrator(flow: FakeFlow | None = None, logger: logging.Logger | None = 
             observer=ChatObserver(logger),
         ),
         states,
+        conversations,
     )
 
 
 def test_orchestrator_returns_frontend_compatible_hospital_envelope() -> None:
-    orchestrator, states = _orchestrator()
+    orchestrator, states, _ = _orchestrator()
 
     response = orchestrator.handle(_payload("Goi IVF Standard gom gi?"))
 
@@ -108,9 +132,9 @@ def test_orchestrator_returns_frontend_compatible_hospital_envelope() -> None:
     assert state.active_entity.name == "Goi IVF Standard"
 
 
-def test_orchestrator_stores_selected_pharmacity_product_in_state() -> None:
+def test_orchestrator_hides_public_pharmacity_sources_but_keeps_internal_state() -> None:
     flow = FakeFlow()
-    orchestrator, states = _orchestrator(flow)
+    orchestrator, states, conversations = _orchestrator(flow)
     start = orchestrator.handle(_payload("Hay cho toi biet thong tin ve thuoc Oresol"))
 
     response = orchestrator.handle(
@@ -118,15 +142,24 @@ def test_orchestrator_stores_selected_pharmacity_product_in_state() -> None:
     )
 
     assert response["route"] == "pharmacity"
-    assert response["selected_product"]["sku"] == "P00219"
+    assert response["sources"] == []
+    assert response["selected_product"] == {
+        "sku": "P00219",
+        "name": "Thuoc bot Oresol 245 DHG",
+    }
     state = states.get_or_create(response["conversation_id"])
     assert state.active_domain == "pharmacity"
     assert state.active_entity
     assert state.active_entity.entity_id == "P00219"
+    assert state.active_entity.source_url == "https://www.pharmacity.vn/oresol-245.html"
+
+    conversation = conversations.get(response["conversation_id"])
+    assert conversation is not None
+    assert conversation.turns[-1].metadata["selected_product"]["detail_url"] == "https://www.pharmacity.vn/oresol-245.html"
 
 
 def test_orchestrator_clarifies_low_confidence_unknown_message() -> None:
-    orchestrator, _ = _orchestrator()
+    orchestrator, _, _ = _orchestrator()
 
     response = orchestrator.handle(_payload("xin chao"))
 
@@ -135,9 +168,85 @@ def test_orchestrator_clarifies_low_confidence_unknown_message() -> None:
     assert response["intent"] == "out_of_scope"
 
 
+def test_orchestrator_resolves_ordinal_hospital_followup() -> None:
+    pipeline = MultiSourceRagPipeline()
+    flow = FakeFlow()
+    states = InMemoryDialogueStateStore()
+    conversations = InMemoryConversationStore()
+    orchestrator = ChatOrchestrator(
+        conversation_store=conversations,
+        hospital_session_store=InMemoryHospitalSessionStore(),
+        dialogue_state_store=states,
+        drug_service=DrugInfoService(
+            flow_provider=lambda: flow,
+            existing_flow_provider=lambda: flow,
+        ),
+        rag_pipeline_provider=lambda: pipeline,
+        router=IntentRouter(),
+        observer=ChatObserver(),
+    )
+
+    start = orchestrator.handle(_payload("Bac si san khoa nao gioi?"))
+    follow_up = orchestrator.handle(
+        _payload("Nguoi thu 2 co kinh nghiem gi?", conversation_id=start["conversation_id"])
+    )
+
+    assert follow_up["status"] == "answered"
+    assert pipeline.questions[-1].startswith("Bac si B.")
+    state = states.get_or_create(start["conversation_id"])
+    assert state.last_selected_item
+    assert state.last_selected_item.title == "Bac si B"
+
+
+def test_orchestrator_does_not_clarify_first_pregnancy_context() -> None:
+    class PackagePipeline:
+        def __init__(self) -> None:
+            self.questions: list[str] = []
+
+        def answer(self, question: str, **kwargs):
+            self.questions.append(question)
+            return SimpleNamespace(
+                answer=f"RAG answer: {question}",
+                sources=[
+                    {"id": "package-sinh-thuong", "title": "Hanh Phuc An Nhien", "url": "https://example.test/a"},
+                    {"id": "package-sinh-mo", "title": "Hanh Phuc Cat Tuong Sinh mo", "url": "https://example.test/b"},
+                ],
+                confidence="high",
+                intent="package_search",
+            )
+
+    pipeline = PackagePipeline()
+    flow = FakeFlow()
+    orchestrator = ChatOrchestrator(
+        conversation_store=InMemoryConversationStore(),
+        hospital_session_store=InMemoryHospitalSessionStore(),
+        dialogue_state_store=InMemoryDialogueStateStore(),
+        drug_service=DrugInfoService(
+            flow_provider=lambda: flow,
+            existing_flow_provider=lambda: flow,
+        ),
+        rag_pipeline_provider=lambda: pipeline,
+        router=IntentRouter(),
+        observer=ChatObserver(),
+    )
+
+    start = orchestrator.handle(_payload("Toi chuan bi sinh thi co cac goi kham nao"))
+    follow_up = orchestrator.handle(
+        _payload(
+            "Toi mang thai lan dau tien va bac si chuan doan toi phai sinh mo",
+            conversation_id=start["conversation_id"],
+        )
+    )
+
+    assert follow_up["status"] == "answered"
+    assert follow_up["route"] == "hospital_rag"
+    assert "needs_clarification" != follow_up["status"]
+    assert pipeline.questions[-1].startswith("Toi mang thai lan dau tien")
+
+
 def test_observability_logs_route_and_latency(caplog) -> None:
     logger = logging.getLogger("test.chat_observer")
-    orchestrator, _ = _orchestrator(logger=logger)
+    orchestrator, _, _ = _orchestrator(logger=logger)
 
     with caplog.at_level(logging.INFO, logger="test.chat_observer"):
         orchestrator.handle(_payload("Goi IVF Standard gom gi?"))

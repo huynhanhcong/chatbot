@@ -28,7 +28,7 @@ class GeminiDrugAssistant:
             "Ban la bo trich xuat ten thuoc tu tin nhan tieng Viet.\n"
             "Chi tra ve JSON hop le, khong markdown, theo schema: "
             '{"drug_name":"ten thuoc can tim"}.\n'
-            "Neu khong co ten thuoc, tra ve {\"drug_name\":null}.\n\n"
+            'Neu khong co ten thuoc, tra ve {"drug_name":null}.\n\n'
             f"Tin nhan: {message}\n"
             "JSON:"
         )
@@ -39,17 +39,21 @@ class GeminiDrugAssistant:
     def summarize_product(self, detail: ProductDetail) -> str:
         context = detail.to_context_text()
         prompt = (
-            "Ban la tro ly thong tin thuoc cho webapp. Hay tom tat bang tieng Viet, "
-            "chi dua tren DU LIEU PHARMACITY ben duoi.\n"
+            "Ban la tro ly thong tin thuoc cho webapp. Hay tra loi bang tieng Viet tu nhien, ngan gon, "
+            "chi dua tren DU LIEU SAN PHAM ben duoi.\n"
             "Quy tac bat buoc:\n"
+            "- Cau dau tien phai tra loi truc tiep vao thong tin chinh ma nguoi dung can biet.\n"
+            "- Toi da 4 cau ngan. Khong viet theo checklist neu nguoi dung khong yeu cau.\n"
+            "- Khong nhac ten nha cung cap hoac noi rang du lieu den tu dau, tru khi nguoi dung hoi nguon.\n"
             "- Khong tu them cong dung, lieu dung, canh bao hoac gia ngoai du lieu.\n"
             "- Neu truong nao khong co du lieu, bo qua truong do.\n"
+            "- Truoc khi tra loi, xac dinh dung y cau hoi va chi lay section lien quan.\n"
+            "- Neu hoi thanh phan, chi liet ke cac dong thanh phan co ham luong/don vi; bo tieu de lap lai va bo danh sach hoat chat roi khong co ham luong.\n"
+            "- Khong lap lai cung mot thong tin duoi nhieu cach viet.\n"
             "- Neu la thuoc ke don, noi ro can tu van bac si/duoc si.\n"
-            "- Luon them cau: Thong tin chi mang tinh tham khao, khong thay the tu van y te.\n"
-            "- Cau truc ngan gon gom cac muc neu co: Ten thuoc, Thanh phan, Cong dung/chi dinh, "
-            "Cach dung/lieu dung, Chong chi dinh/than trong/tac dung phu, Dong goi/gia, Nguon.\n\n"
-            f"DU LIEU PHARMACITY:\n{context}\n\n"
-            "Tom tat:"
+            "- Khong tu dong them disclaimer neu cau hoi khong canh bao nguy co.\n\n"
+            f"DU LIEU SAN PHAM:\n{context}\n\n"
+            "Tra loi:"
         )
         summary = self.generator.generate(prompt).strip()
         if not summary:
@@ -68,11 +72,17 @@ class GeminiDrugAssistant:
             "Hay tra loi cau hoi moi bang tieng Viet, dua tren SAN PHAM DANG NOI TOI "
             "va lich su hoi thoai neu can.\n"
             "Quy tac bat buoc:\n"
+            "- Tra loi truc tiep, tu nhien, ngan gon. Toi da 3 cau ngan.\n"
+            "- Cau dau tien phai tra loi dung y nguoi dung hoi.\n"
             "- Khong doi sang san pham khac.\n"
-            "- Khong tu them thong tin ngoai du lieu Pharmacity.\n"
+            "- Khong nhac ten nha cung cap hoac noi rang du lieu den tu dau, tru khi nguoi dung hoi nguon.\n"
+            "- Khong tu them thong tin ngoai du lieu san pham.\n"
+            "- Truoc khi tra loi, loc du lieu dung voi cau hoi moi; khong ke them section khac neu nguoi dung khong hoi.\n"
+            "- Neu cau hoi ve thanh phan, dinh dang: Thanh phan cua \"ten thuoc\": sau do moi dong la mot thanh phan co ham luong/don vi. Bo tieu de 'Thanh phan' lap lai va bo cac dong hoat chat roi khong co ham luong.\n"
+            "- Khong lap lai cung mot thong tin duoi nhieu cach viet.\n"
             "- Dung LICH_SU_HOI_THOAI de hieu cau hoi tiep noi, nhung cau tra loi phai dua tren SAN PHAM DANG NOI TOI.\n"
             "- Neu cau hoi khong the tra loi tu du lieu, noi ro chua co thong tin trong du lieu.\n"
-            "- Luon them cau: Thong tin chi mang tinh tham khao, khong thay the tu van y te.\n\n"
+            "- Khong tu dong them disclaimer neu cau hoi khong canh bao nguy co.\n\n"
             f"SAN PHAM DANG NOI TOI:\n{context}\n\n"
             f"LICH_SU_HOI_THOAI:\n{previous_answer or 'Khong co'}\n\n"
             f"CAU HOI MOI: {question}\n\n"

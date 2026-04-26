@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import Any, Callable, Literal
 
+from .redis_utils import create_redis_client, redis_get_json, redis_set_json
+
 
 RouteName = Literal["hospital_rag", "pharmacity"]
 
@@ -146,6 +148,100 @@ class InMemoryConversationStore:
         self._sessions.pop(oldest_id, None)
 
 
+class RedisConversationStore:
+    def __init__(
+        self,
+        redis_url: str,
+        ttl_seconds: int = 30 * 60,
+        max_recent_turns: int = 8,
+        max_summary_chars: int = 2500,
+        client: Any | None = None,
+        time_func: Callable[[], float] | None = None,
+    ) -> None:
+        self.ttl_seconds = ttl_seconds
+        self.max_recent_turns = max_recent_turns
+        self.max_summary_chars = max_summary_chars
+        self._time_func = time_func or time.monotonic
+        self._client = client or create_redis_client(redis_url)
+        self._prefix = "chatbot:conversation:"
+
+    def get_or_create(self, conversation_id: str | None = None) -> ConversationSession:
+        if conversation_id:
+            session = self.get(conversation_id)
+            if session is not None:
+                return session
+
+        session_id = conversation_id or str(uuid.uuid4())
+        session = ConversationSession(
+            conversation_id=session_id,
+            expires_at=self._time_func() + self.ttl_seconds,
+        )
+        self._save(session)
+        return session
+
+    def get(self, conversation_id: str | None) -> ConversationSession | None:
+        if not conversation_id:
+            return None
+        payload = redis_get_json(self._client, self._key(conversation_id))
+        if not isinstance(payload, dict):
+            return None
+        return _conversation_session_from_json(payload)
+
+    def save_turn(
+        self,
+        *,
+        conversation_id: str,
+        route: RouteName,
+        user_message: str,
+        assistant_message: str | None,
+        standalone_question: str | None = None,
+        sources: list[dict[str, Any]] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ConversationSession:
+        session = self.get_or_create(conversation_id)
+        turn = ConversationTurn(
+            route=route,
+            user_message=user_message,
+            assistant_message=assistant_message,
+            standalone_question=standalone_question,
+            sources=sources or [],
+            metadata=metadata or {},
+            timestamp=self._time_func(),
+        )
+        session.turns.append(turn)
+        session.active_route = route
+        session.expires_at = self._time_func() + self.ttl_seconds
+
+        if len(session.turns) > self.max_recent_turns:
+            overflow_count = len(session.turns) - self.max_recent_turns
+            overflow = session.turns[:overflow_count]
+            session.summary = _merge_summary(
+                existing=session.summary,
+                turns=overflow,
+                max_chars=self.max_summary_chars,
+            )
+            del session.turns[:overflow_count]
+
+        self._save(session)
+        return session
+
+    def set_active_route(self, conversation_id: str, route: RouteName) -> ConversationSession:
+        session = self.get_or_create(conversation_id)
+        session.active_route = route
+        session.expires_at = self._time_func() + self.ttl_seconds
+        self._save(session)
+        return session
+
+    def delete(self, conversation_id: str) -> None:
+        self._client.delete(self._key(conversation_id))
+
+    def _save(self, session: ConversationSession) -> None:
+        redis_set_json(self._client, self._key(session.conversation_id), session, self.ttl_seconds)
+
+    def _key(self, conversation_id: str) -> str:
+        return self._prefix + conversation_id
+
+
 def format_conversation_context(
     session: ConversationSession | None,
     *,
@@ -232,3 +328,25 @@ def _truncate_middle(value: str, max_chars: int) -> str:
     head_len = max_chars * 2 // 3
     tail_len = max_chars - head_len - 18
     return value[:head_len].rstrip() + "\n...[rut gon]...\n" + value[-tail_len:].lstrip()
+
+
+def _conversation_turn_from_json(payload: dict[str, Any]) -> ConversationTurn:
+    return ConversationTurn(
+        route=str(payload.get("route") or "hospital_rag"),  # type: ignore[arg-type]
+        user_message=str(payload.get("user_message") or ""),
+        assistant_message=payload.get("assistant_message"),
+        timestamp=float(payload.get("timestamp") or 0.0),
+        standalone_question=payload.get("standalone_question"),
+        sources=list(payload.get("sources") or []),
+        metadata=dict(payload.get("metadata") or {}),
+    )
+
+
+def _conversation_session_from_json(payload: dict[str, Any]) -> ConversationSession:
+    return ConversationSession(
+        conversation_id=str(payload.get("conversation_id") or ""),
+        expires_at=float(payload.get("expires_at") or 0.0),
+        active_route=payload.get("active_route"),
+        summary=str(payload.get("summary") or ""),
+        turns=[_conversation_turn_from_json(item) for item in payload.get("turns") or [] if isinstance(item, dict)],
+    )

@@ -49,47 +49,41 @@ class IntentRouter:
         drug_intent = looks_like_drug_question(normalized)
         hospital_intent = looks_like_hospital_question(normalized)
         price_intent = looks_like_price_question(normalized)
+        compare_intent = looks_like_compare_question(normalized)
         doctor_intent = looks_like_doctor_question(normalized)
         package_intent = looks_like_package_question(normalized)
+        ordinal_reference = looks_like_ordinal_reference(normalized)
         contextual = looks_like_contextual_follow_up(normalized)
         pharmacity_session = context.pharmacity_session
 
-        if pharmacity_session is not None and _session_needs_product_selection(pharmacity_session):
+        if _pending_product_selection(context, pharmacity_session):
             if looks_like_product_selection(normalized):
                 return IntentDecision("drug_followup", "pharmacity", 0.99, "pending_product_selection")
             if hospital_intent and not drug_intent:
-                return _hospital_decision(normalized, price_intent, doctor_intent, package_intent)
-            if drug_intent:
-                return IntentDecision("drug_search", "pharmacity", 0.94, "active_drug_session")
+                return _hospital_decision(normalized, price_intent, doctor_intent, package_intent, compare_intent)
+            if drug_intent or _references_pending_product(normalized):
+                return IntentDecision("drug_followup", "pharmacity", 0.88, "pending_product_context")
 
         if drug_intent and not hospital_intent:
             return IntentDecision("drug_search", "pharmacity", 0.95, "drug_lookup_signal")
 
         if hospital_intent and not drug_intent:
-            return _hospital_decision(normalized, price_intent, doctor_intent, package_intent)
+            return _hospital_decision(normalized, price_intent, doctor_intent, package_intent, compare_intent)
 
         if drug_intent and hospital_intent:
             if has_strong_drug_lookup_signal(normalized):
                 return IntentDecision("drug_search", "pharmacity", 0.78, "mixed_intent_strong_drug")
-            return _hospital_decision(normalized, price_intent, doctor_intent, package_intent)
+            return _hospital_decision(normalized, price_intent, doctor_intent, package_intent, compare_intent)
 
-        if contextual:
-            if (
-                context.conversation.active_route == "pharmacity"
-                and pharmacity_session is not None
-            ) or context.state.active_domain == "pharmacity":
-                return IntentDecision("drug_followup", "pharmacity", 0.82, "contextual_pharmacity")
-            if (
-                context.conversation.active_route == "hospital_rag"
-                or context.hospital_active
-                or context.state.active_domain == "hospital"
-            ):
-                return IntentDecision("context_followup", "hospital_rag", 0.82, "contextual_hospital")
+        if _has_active_pharmacity_context(context, pharmacity_session) and _references_active_product(normalized):
+            return IntentDecision("drug_followup", "pharmacity", 0.82, "active_product_context")
 
-        if context.conversation.active_route == "pharmacity" and pharmacity_session is not None:
-            return IntentDecision("drug_followup", "pharmacity", 0.72, "active_pharmacity_route")
-        if context.conversation.active_route == "hospital_rag" or context.hospital_active:
-            return IntentDecision("context_followup", "hospital_rag", 0.72, "active_hospital_route")
+        if _has_active_hospital_context(context) and (contextual or ordinal_reference or compare_intent):
+            if compare_intent:
+                return IntentDecision("compare_question", "hospital_rag", 0.87, "hospital_context_compare")
+            if price_intent:
+                return IntentDecision("price_question", "hospital_rag", 0.84, "hospital_context_price")
+            return IntentDecision("context_followup", "hospital_rag", 0.82, "active_hospital_context")
 
         if self.fallback_classifier is not None:
             fallback = self.fallback_classifier.classify(message, context.state)
@@ -107,7 +101,10 @@ def _hospital_decision(
     price_intent: bool,
     doctor_intent: bool,
     package_intent: bool,
+    compare_intent: bool = False,
 ) -> IntentDecision:
+    if compare_intent:
+        return IntentDecision("compare_question", "hospital_rag", 0.91, "hospital_compare_signal")
     if price_intent:
         return IntentDecision("price_question", "hospital_rag", 0.91, "hospital_price_signal")
     if doctor_intent:
@@ -123,6 +120,32 @@ def _out_of_scope(reason: str) -> IntentDecision:
     return IntentDecision("out_of_scope", "out_of_scope", 0.35, reason)
 
 
+def _pending_product_selection(context: RouteContext, session: Any) -> bool:
+    return (
+        session is not None
+        and _session_needs_product_selection(session)
+        and context.state.unresolved_slots.get("product_selection") == "required"
+    )
+
+
+def _has_active_pharmacity_context(context: RouteContext, session: Any) -> bool:
+    return (
+        session is not None
+        and (
+            context.conversation.active_route == "pharmacity"
+            or context.state.active_domain == "pharmacity"
+        )
+    )
+
+
+def _has_active_hospital_context(context: RouteContext) -> bool:
+    return (
+        context.conversation.active_route == "hospital_rag"
+        or context.hospital_active
+        or context.state.active_domain == "hospital"
+    )
+
+
 def _session_needs_product_selection(session: Any) -> bool:
     return getattr(session, "selected_detail", None) is None
 
@@ -132,14 +155,13 @@ def looks_like_drug_question(normalized: str) -> bool:
         return True
     if re.search(r"\bthuoc\s+(?!gi\b|nao\b|nay\b|do\b|tren\b)([a-z0-9][\w.+-]{1,})", normalized):
         return True
-    if re.search(r"\b(?:tim|tra cuu|thong tin|cho toi biet).{0,40}\bthuoc\b", normalized):
+    if re.search(r"\b(?:tim|tra cuu|thong tin|cho toi biet|xin|cho minh xin).{0,40}\bthuoc\b", normalized):
         return not re.search(r"\b(?:thuoc gi|thuoc nao|uong thuoc gi)\b", normalized)
     return False
 
 
 def has_strong_drug_lookup_signal(normalized: str) -> bool:
     drug_keywords = [
-        "pharmacity",
         "duoc pham",
         "oresol",
         "paracetamol",
@@ -148,6 +170,7 @@ def has_strong_drug_lookup_signal(normalized: str) -> bool:
         "vitamin",
         "vien uong",
         "siro",
+        "thuoc",
     ]
     if any(keyword in normalized for keyword in drug_keywords):
         return True
@@ -173,6 +196,10 @@ def looks_like_hospital_question(normalized: str) -> bool:
         "phu khoa",
         "nhi khoa",
         "goi sinh",
+        "sinh mo",
+        "sinh thuong",
+        "chuan bi sinh",
+        "sap sinh",
         "dich vu trong goi",
         "mang thai",
     ]
@@ -199,6 +226,22 @@ def looks_like_price_question(normalized: str) -> bool:
     )
 
 
+def looks_like_compare_question(normalized: str) -> bool:
+    return any(keyword in normalized for keyword in ["khac gi", "so sanh", "khac nhau", "hon nhau"])
+
+
+def looks_like_ordinal_reference(normalized: str) -> bool:
+    if re.search(
+        r"\b(?:goi|loai|nguoi|bac si|dich vu|san pham|muc|cai)\s+"
+        r"(?:dau tien|thu nhat|thu hai|thu ba|thu tu|thu nam)\b",
+        normalized,
+    ):
+        return True
+    if normalized.strip() in {"dau tien", "thu nhat", "thu hai", "thu ba", "thu tu", "thu nam"}:
+        return True
+    return bool(re.search(r"\b(?:goi|loai|nguoi|bac si|dich vu|san pham)\s+(?:thu\s+|so\s+)?[1-9]\b", normalized))
+
+
 def looks_like_general_medical_question(normalized: str) -> bool:
     return any(
         keyword in normalized
@@ -220,24 +263,91 @@ def looks_like_product_selection(normalized: str) -> bool:
 
 def looks_like_contextual_follow_up(normalized: str) -> bool:
     contextual_keywords = [
-        "nay",
-        "do",
         "tren",
         "vua roi",
         "goi nay",
         "goi kham nay",
+        "goi do",
+        "goi dau",
+        "goi dau tien",
+        "goi thu 2",
+        "goi thu hai",
         "dich vu nay",
+        "dich vu do",
         "bac si nay",
+        "bac si kia",
+        "nguoi dau tien",
+        "nguoi thu 2",
+        "nguoi thu hai",
+        "loai dau tien",
+        "loai thu 2",
+        "loai thu hai",
+        "khac gi",
+        "so sanh",
         "san pham nay",
+        "thuoc nay",
         "chi phi",
-        "gia",
+        "gia bao nhieu",
         "bao nhieu tien",
-        "bao nhieu",
         "gom gi",
         "co gi",
         "cong dung",
+        "thanh phan",
+        "cach dung",
+        "ke don",
+        "xem them",
     ]
-    return len(normalized.split()) <= 8 or any(keyword in normalized for keyword in contextual_keywords)
+    if any(keyword in normalized for keyword in contextual_keywords):
+        return True
+    if re.search(r"\b(?:nay|do|kia)\b", normalized):
+        return True
+    return normalized in {
+        "gia",
+        "chi phi",
+        "bao nhieu",
+        "bao nhieu tien",
+        "gom gi",
+        "co gi",
+        "cong dung gi",
+        "thanh phan gi",
+        "cach dung",
+        "ke don khong",
+    }
+
+
+def _references_pending_product(normalized: str) -> bool:
+    return any(
+        keyword in normalized
+        for keyword in [
+            "san pham",
+            "thuoc nao",
+            "loai nao",
+            "chon",
+            "gia",
+            "bao nhieu",
+            "thanh phan",
+            "cong dung",
+            "cach dung",
+            "ke don",
+            "xem them",
+        ]
+    )
+
+
+def _references_active_product(normalized: str) -> bool:
+    return looks_like_contextual_follow_up(normalized) or any(
+        keyword in normalized
+        for keyword in [
+            "thuoc",
+            "san pham",
+            "gia",
+            "thanh phan",
+            "cong dung",
+            "cach dung",
+            "ke don",
+            "xem them",
+        ]
+    )
 
 
 def normalize_vi(value: str) -> str:

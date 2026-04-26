@@ -9,15 +9,19 @@ from Flow_code.conversation_memory import (
 )
 from Flow_code.dialogue_state import (
     DialogueStateStore,
+    displayed_item_from_active_entity,
+    displayed_items_from_pharmacity_options,
+    displayed_items_from_sources,
     entity_from_pharmacity_response,
     entity_from_sources,
     update_state_after_turn,
 )
-from Flow_code.drug_service import DrugInfoService
+from Flow_code.drug_service import DrugInfoService, pharmacity_envelope
 from Flow_code.hospital_session import HospitalSession, HospitalTurn, InMemoryHospitalSessionStore
 from Flow_code.observability import ChatObserver
+from Flow_code.mention_resolver import MentionResolver, ResolvedReference, render_memory_context
 from Flow_code.router_service import IntentRouter, RouteContext, looks_like_contextual_follow_up, normalize_vi
-from Flow_code.service_contracts import ChatEnvelope, IntentDecision
+from Flow_code.service_contracts import ChatEnvelope, DisplayedItem, IntentDecision
 
 
 class ChatOrchestrator:
@@ -39,6 +43,7 @@ class ChatOrchestrator:
         self.rag_pipeline_provider = rag_pipeline_provider
         self.router = router or IntentRouter()
         self.observer = observer or ChatObserver()
+        self.mention_resolver = MentionResolver()
 
     def handle(self, payload: Any) -> dict[str, Any]:
         trace = self.observer.start(path="/chat")
@@ -46,6 +51,7 @@ class ChatOrchestrator:
         state = self.dialogue_state_store.get_or_create(conversation.conversation_id)
         try:
             pharmacity_session = self.drug_service.get_session(conversation.conversation_id)
+            resolved = self.mention_resolver.resolve(payload.message, state)
             decision = self.router.classify(
                 message=payload.message,
                 selected_index=payload.selected_index,
@@ -68,7 +74,10 @@ class ChatOrchestrator:
             if decision.route == "pharmacity":
                 envelope = self._handle_pharmacity(payload, conversation, decision)
             elif decision.route == "hospital_rag":
-                envelope = self._handle_hospital_rag(payload, conversation, decision)
+                if resolved.needs_clarification:
+                    envelope = self._handle_reference_clarification(conversation, decision, resolved)
+                else:
+                    envelope = self._handle_hospital_rag(payload, conversation, decision, resolved)
             else:
                 envelope = self._handle_out_of_scope(conversation, decision)
 
@@ -79,6 +88,9 @@ class ChatOrchestrator:
                 route=str(envelope.get("route")),
                 intent=envelope.get("intent"),
                 retrieval_count=len(envelope.get("sources") or []),
+                selection_step=envelope.get("status") == "need_selection",
+                clarification_step=envelope.get("status") == "needs_clarification",
+                empty_context=envelope.get("route") == "hospital_rag" and not (envelope.get("sources") or []),
             )
             return envelope
         except Exception as exc:
@@ -95,30 +107,33 @@ class ChatOrchestrator:
         conversation: ConversationSession,
         decision: IntentDecision,
     ) -> dict[str, Any]:
-        envelope = self.drug_service.handle_envelope(
+        raw_response = self.drug_service.handle_raw(
             message=payload.message,
             conversation_id=conversation.conversation_id,
             selected_index=payload.selected_index,
             selected_sku=payload.selected_sku,
         )
+        envelope = pharmacity_envelope(raw_response)
         conversation_id = envelope.get("conversation_id") or conversation.conversation_id
         self._remember_chat_turn(
             conversation_id=conversation_id,
             route="pharmacity",
             user_message=payload.message,
             assistant_message=envelope.get("answer") or envelope.get("message"),
-            sources=envelope.get("sources") or [],
             metadata={
-                "status": envelope.get("status"),
-                "selected_product": envelope.get("selected_product"),
+                "status": raw_response.get("status"),
+                "selected_product": raw_response.get("selected_product"),
+                "internal_grounding": raw_response.get("internal_grounding"),
                 "intent_decision": decision.reason,
             },
         )
         state = self.dialogue_state_store.get_or_create(conversation_id)
-        active_entity = entity_from_pharmacity_response(envelope)
+        active_entity = entity_from_pharmacity_response(raw_response)
+        shown_items = displayed_items_from_pharmacity_options(raw_response.get("options"))
+        selected_item = displayed_item_from_active_entity(active_entity) if active_entity is not None else None
         unresolved_slots = (
             {"product_selection": "required"}
-            if envelope.get("status") == "need_selection"
+            if raw_response.get("status") == "need_selection"
             else {}
         )
         self.dialogue_state_store.save(
@@ -127,9 +142,16 @@ class ChatOrchestrator:
                 domain="pharmacity",
                 intent=decision.intent,
                 active_entity=active_entity,
+                last_selected_item=selected_item,
+                last_shown_items=shown_items if shown_items else None,
+                pending_question=raw_response.get("internal_grounding", {}).get("drug_name")
+                if raw_response.get("status") == "need_selection"
+                else None,
                 unresolved_slots=unresolved_slots,
             )
         )
+        if shown_items:
+            envelope["displayed_items"] = [_displayed_item_response(item) for item in shown_items]
         envelope["intent"] = decision.intent
         envelope["confidence"] = _decision_confidence_label(decision)
         return envelope
@@ -139,21 +161,28 @@ class ChatOrchestrator:
         payload: Any,
         conversation: ConversationSession,
         decision: IntentDecision,
+        resolved: ResolvedReference,
     ) -> dict[str, Any]:
         pipeline = self.rag_pipeline_provider()
         session = self.hospital_session_store.get_or_create(conversation.conversation_id)
+        state = self.dialogue_state_store.get_or_create(conversation.conversation_id)
         standalone_question = standalone_hospital_question(
             pipeline,
             session,
             payload.message,
             conversation,
+            resolved,
         )
         conversation_context = format_conversation_context(conversation)
+        memory_context = render_memory_context(state, resolved)
         answer = answer_hospital_pipeline(
             pipeline=pipeline,
             standalone_question=standalone_question,
             original_question=payload.message,
             conversation_context=conversation_context,
+            memory_context=memory_context,
+            resolved_items=resolved.resolved_items,
+            answer_mode=resolved.intent or decision.intent,
         )
         self.hospital_session_store.save_turn(
             conversation_id=session.conversation_id,
@@ -175,13 +204,19 @@ class ChatOrchestrator:
                 "intent_decision": decision.reason,
             },
         )
-        state = self.dialogue_state_store.get_or_create(session.conversation_id)
+        shown_items = displayed_items_from_sources(answer.sources)
+        active_entity = entity_from_sources(answer.sources)
+        selected_item = resolved.primary_item
+        compared_items = resolved.resolved_items[:2] if (resolved.intent == "compare_question" and len(resolved.resolved_items) >= 2) else None
         self.dialogue_state_store.save(
             update_state_after_turn(
                 state,
                 domain="hospital",
                 intent=decision.intent,
-                active_entity=entity_from_sources(answer.sources),
+                active_entity=active_entity,
+                last_selected_item=selected_item,
+                last_shown_items=shown_items if shown_items else None,
+                last_compared_items=compared_items,
             )
         )
         return {
@@ -194,7 +229,37 @@ class ChatOrchestrator:
             "sources": answer.sources,
             "confidence": answer.confidence,
             "intent": answer.intent,
+            "displayed_items": [_displayed_item_response(item) for item in shown_items],
         }
+
+    def _handle_reference_clarification(
+        self,
+        conversation: ConversationSession,
+        decision: IntentDecision,
+        resolved: ResolvedReference,
+    ) -> dict[str, Any]:
+        options = [_displayed_item_response(item) for item in resolved.resolved_items[:4]]
+        answer = _reference_clarification_message(resolved.resolved_items)
+        state = self.dialogue_state_store.get_or_create(conversation.conversation_id)
+        self.dialogue_state_store.save(
+            update_state_after_turn(
+                state,
+                domain=state.active_domain,
+                intent="clarification",
+                ambiguity_candidates=resolved.resolved_items[:4],
+                unresolved_slots={"clarification": resolved.reason or "ambiguous_reference"},
+            )
+        )
+        return ChatEnvelope(
+            status="needs_clarification",
+            route=decision.route,
+            conversation_id=conversation.conversation_id,
+            answer=answer,
+            options=options,
+            confidence="medium",
+            intent=decision.intent,
+            displayed_items=options,
+        ).to_response()
 
     def _handle_out_of_scope(
         self,
@@ -202,7 +267,7 @@ class ChatOrchestrator:
         decision: IntentDecision,
     ) -> dict[str, Any]:
         answer = (
-            "Tôi chưa xác định được bạn muốn hỏi về thuốc Pharmacity hay dữ liệu "
+            "Tôi chưa xác định được bạn muốn hỏi về thuốc hay dữ liệu "
             "Bệnh viện Hạnh Phúc. Bạn vui lòng nói rõ tên thuốc, tên gói khám, "
             "bác sĩ hoặc dịch vụ cần tra cứu."
         )
@@ -254,7 +319,29 @@ def answer_hospital_pipeline(
     standalone_question: str,
     original_question: str,
     conversation_context: str,
+    memory_context: str | None = None,
+    resolved_items: list[DisplayedItem] | None = None,
+    answer_mode: str | None = None,
 ) -> Any:
+    try:
+        return pipeline.answer(
+            standalone_question,
+            conversation_context=conversation_context,
+            original_question=original_question,
+            memory_context=memory_context,
+            resolved_entities=[_displayed_item_response(item) for item in resolved_items or []],
+            answer_mode=answer_mode,
+        )
+    except TypeError as exc:
+        message = str(exc)
+        if (
+            "conversation_context" not in message
+            and "original_question" not in message
+            and "memory_context" not in message
+            and "resolved_entities" not in message
+            and "answer_mode" not in message
+        ):
+            raise
     try:
         return pipeline.answer(
             standalone_question,
@@ -262,7 +349,8 @@ def answer_hospital_pipeline(
             original_question=original_question,
         )
     except TypeError as exc:
-        if "conversation_context" not in str(exc) and "original_question" not in str(exc):
+        message = str(exc)
+        if "conversation_context" not in message and "original_question" not in message:
             raise
         return pipeline.answer(standalone_question)
 
@@ -272,8 +360,13 @@ def standalone_hospital_question(
     session: HospitalSession,
     message: str,
     conversation: ConversationSession | None = None,
+    resolved: ResolvedReference | None = None,
 ) -> str:
+    if resolved and resolved.primary_item is not None:
+        return f"{resolved.primary_item.title}. {message.strip()}"
     if not session.turns and not session.summary:
+        return message
+    if not _should_rewrite_hospital_follow_up(session, message):
         return message
 
     fallback = fallback_hospital_question(session, message)
@@ -370,9 +463,39 @@ def last_hospital_subject(session: HospitalSession) -> str | None:
     return None
 
 
+def _should_rewrite_hospital_follow_up(session: HospitalSession, message: str) -> bool:
+    if not last_hospital_subject(session):
+        return False
+    return looks_like_contextual_follow_up(normalize_vi(message))
+
+
 def _decision_confidence_label(decision: IntentDecision) -> str:
     if decision.confidence >= 0.85:
         return "high"
     if decision.confidence >= 0.55:
         return "medium"
     return "low"
+
+
+def _displayed_item_response(item: DisplayedItem) -> dict[str, Any]:
+    return {
+        "index": item.index,
+        "entity_id": item.entity_id,
+        "entity_type": item.entity_type,
+        "title": item.title,
+        "source": item.source,
+        "source_url": item.source_url,
+        "price_vnd": item.price_vnd,
+        "payload": item.payload,
+    }
+
+
+def _reference_clarification_message(items: list[DisplayedItem]) -> str:
+    if not items:
+        return "Bạn muốn hỏi về gói, dịch vụ hoặc bác sĩ nào? Bạn vui lòng nói rõ tên giúp mình."
+    names = [item.title for item in items[:4]]
+    if len(names) == 1:
+        return f"Bạn muốn hỏi về {names[0]} đúng không?"
+    return "Bạn đang muốn hỏi mục nào: " + "; ".join(
+        f"{index}. {name}" for index, name in enumerate(names, start=1)
+    )

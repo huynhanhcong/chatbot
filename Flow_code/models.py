@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .pharmacity_detail_extractor import render_all_crawled_drug_info
+
 
 PHARMACITY_WEB_BASE_URL = "https://www.pharmacity.vn"
 
@@ -46,16 +48,18 @@ class ProductOption:
             is_prescription_drug=bool(item.get("is_prescription_drug")),
         )
 
-    def to_response(self) -> dict[str, Any]:
-        return {
+    def to_response(self, *, include_detail_url: bool = True) -> dict[str, Any]:
+        data = {
             "index": self.index,
             "sku": self.sku,
             "name": self.name,
             "brand": self.brand,
             "price": self.price,
-            "detail_url": self.detail_url,
             "image_url": self.image_url,
         }
+        if include_detail_url:
+            data["detail_url"] = self.detail_url
+        return data
 
 
 @dataclass(frozen=True)
@@ -74,14 +78,17 @@ class ProductDetail:
     source_url: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-    def selected_product_response(self) -> dict[str, Any]:
-        return {
+    def selected_product_response(self, *, include_detail_url: bool = True) -> dict[str, Any]:
+        data = {
             "sku": self.sku,
             "name": self.name,
-            "detail_url": self.source_url,
         }
+        if include_detail_url:
+            data["detail_url"] = self.source_url
+        return data
 
     def to_context_text(self, max_description_chars: int = 12000) -> str:
+        crawled_info = render_all_crawled_drug_info(self.raw, max_chars=max_description_chars)
         parts = [
             ("Ten thuoc", self.name),
             ("SKU", self.sku),
@@ -93,6 +100,7 @@ class ProductDetail:
             ("Dong goi/gia", format_variants_price(self.variants)),
             ("Mo ta ngan", self.short_description),
             ("Thong tin chi tiet", _truncate(self.long_description, max_description_chars)),
+            ("Tat ca thong tin crawl duoc", _truncate(crawled_info, max_description_chars)),
             ("Nguon", self.source_url),
         ]
         return "\n".join(f"{label}: {value}" for label, value in parts if value)

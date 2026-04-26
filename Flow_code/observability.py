@@ -47,16 +47,22 @@ class ChatObserver:
         route: str,
         intent: str | None = None,
         retrieval_count: int | None = None,
+        selection_step: bool | None = None,
+        clarification_step: bool | None = None,
+        empty_context: bool | None = None,
     ) -> None:
         elapsed_ms = (time.perf_counter() - trace.started_at) * 1000
         self.logger.info(
-            "chat_finish path=%s conversation_id=%s status=%s route=%s intent=%s retrieval_count=%s latency_ms=%.2f",
+            "chat_finish path=%s conversation_id=%s status=%s route=%s intent=%s retrieval_count=%s selection_step=%s clarification_step=%s empty_context=%s latency_ms=%.2f",
             trace.path,
             conversation_id,
             status,
             route,
             intent,
             retrieval_count,
+            selection_step,
+            clarification_step,
+            empty_context,
             elapsed_ms,
         )
 

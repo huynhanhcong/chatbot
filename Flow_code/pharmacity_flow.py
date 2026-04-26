@@ -12,7 +12,14 @@ from .drug_extraction import extract_drug_name_local
 from .drug_summary import answer_product_follow_up_template, render_product_summary
 from .gemini_assistant import GeminiDrugAssistant, normalize_text
 from .models import ProductDetail, ProductOption
+from .pharmacity_export import (
+    DEFAULT_PHARMACITY_EXPORT_PATH,
+    DEFAULT_PHARMACITY_EXTRACTED_PATH,
+    export_extracted_product_info,
+    export_product_detail,
+)
 from .pharmacity_client import PharmacityApiClient
+from .response_formatter import format_user_answer
 from .session_store import InMemorySessionStore, SearchSession, format_drug_history
 
 
@@ -62,11 +69,15 @@ class PharmacityFlow:
         assistant: DrugAssistant | None = None,
         session_store: InMemorySessionStore | None = None,
         max_options: int = 4,
+        export_path: str | None = str(DEFAULT_PHARMACITY_EXPORT_PATH),
+        extracted_export_path: str | None = str(DEFAULT_PHARMACITY_EXTRACTED_PATH),
     ) -> None:
         self.client = client or self._build_default_client()
         self.assistant = assistant or self._build_default_assistant()
         self.session_store = session_store or InMemorySessionStore()
         self.max_options = max_options
+        self.export_path = export_path
+        self.extracted_export_path = extracted_export_path
 
     def handle_message(
         self,
@@ -88,7 +99,7 @@ class PharmacityFlow:
             )
 
         session = self.session_store.get(conversation_id)
-        text_selection = _parse_text_selection(message) if session else None
+        text_selection = parse_product_selection(message) if session else None
         if session and text_selection is not None:
             return self._answer_selected_product(
                 conversation_id=conversation_id,
@@ -96,6 +107,8 @@ class PharmacityFlow:
                 selected_sku=None,
                 user_message=message,
             )
+        if session and session.selected_detail is None and _should_reuse_pending_selection(session, message):
+            return self._pending_selection_response(session)
         if session and session.selected_detail is not None:
             return self._answer_follow_up(session=session, question=message)
 
@@ -112,6 +125,7 @@ class PharmacityFlow:
         session = self.session_store.save_search(
             drug_name=drug_name,
             options=options,
+            question=message,
             conversation_id=conversation_id,
         )
 
@@ -119,16 +133,18 @@ class PharmacityFlow:
             return {
                 "status": "not_found",
                 "conversation_id": session.conversation_id,
-                "message": f"Không tìm thấy thuốc phù hợp với '{drug_name}' trên Pharmacity.",
+                "message": f"Hiện chưa tìm thấy sản phẩm phù hợp với '{drug_name}'.",
                 "options": [],
+                "internal_grounding": {
+                    "provider": "pharmacity",
+                    "drug_name": drug_name,
+                },
             }
 
-        return {
-            "status": "need_selection",
-            "conversation_id": session.conversation_id,
-            "message": "Tôi tìm thấy các thuốc sau, bạn muốn hỏi thuốc nào?",
-            "options": [option.to_response() for option in options],
-        }
+        return self._selection_response(
+            session,
+            message="Mình đã tìm thấy vài sản phẩm phù hợp. Bạn chọn 1 sản phẩm để mình trả lời chính xác hơn nhé.",
+        )
 
     def start_drug_info_flow(
         self,
@@ -150,6 +166,25 @@ class PharmacityFlow:
     def get_session(self, conversation_id: str | None) -> SearchSession | None:
         return self.session_store.get(conversation_id)
 
+    def _pending_selection_response(self, session: SearchSession) -> dict[str, Any]:
+        return self._selection_response(
+            session,
+            message="Bạn chọn giúp mình 1 sản phẩm trong danh sách ở trên để mình trả lời đúng sản phẩm nhé.",
+        )
+
+    def _selection_response(self, session: SearchSession, *, message: str) -> dict[str, Any]:
+        return {
+            "status": "need_selection",
+            "conversation_id": session.conversation_id,
+            "message": message,
+            "options": [option.to_response() for option in session.options],
+            "internal_grounding": {
+                "provider": "pharmacity",
+                "drug_name": session.drug_name,
+                "option_count": len(session.options),
+            },
+        }
+
     def _answer_selected_product(
         self,
         conversation_id: str | None,
@@ -162,12 +197,19 @@ class PharmacityFlow:
         started_at = time.perf_counter()
         detail = self.client.fetch_product_detail(option)
         _log_latency("pharmacity_detail", started_at)
-        answer = render_product_summary(detail)
+        self._export_product_detail(detail)
+        question = _resolve_selection_question(session, user_message)
+
+        answer = answer_product_follow_up_template(detail, question or "")
+        if not answer:
+            answer = self._summarize_selected_product(detail)
+        answer = format_user_answer(answer)
+
         self.session_store.save_selected_detail(
             conversation_id=session.conversation_id,
             selected_detail=detail,
             last_answer=answer,
-            question=user_message or f"Chon san pham {detail.name}",
+            question=question or f"Chọn sản phẩm {detail.name}",
         )
 
         return {
@@ -176,6 +218,12 @@ class PharmacityFlow:
             "answer": answer,
             "selected_product": detail.selected_product_response(),
             "source_url": detail.source_url,
+            "internal_grounding": {
+                "provider": "pharmacity",
+                "drug_name": session.drug_name,
+                "selected_product": detail.selected_product_response(),
+                "source_url": detail.source_url,
+            },
         }
 
     def _answer_follow_up(self, session: SearchSession, question: str) -> dict[str, Any]:
@@ -194,6 +242,7 @@ class PharmacityFlow:
                 )
             except RuntimeError as exc:
                 raise FlowDependencyError(str(exc)) from exc
+        answer = format_user_answer(answer)
         self.session_store.save_selected_detail(
             conversation_id=session.conversation_id,
             selected_detail=session.selected_detail,
@@ -206,7 +255,30 @@ class PharmacityFlow:
             "answer": answer,
             "selected_product": session.selected_detail.selected_product_response(),
             "source_url": session.selected_detail.source_url,
+            "internal_grounding": {
+                "provider": "pharmacity",
+                "drug_name": session.drug_name,
+                "selected_product": session.selected_detail.selected_product_response(),
+                "source_url": session.selected_detail.source_url,
+            },
         }
+
+    def _summarize_selected_product(self, detail: ProductDetail) -> str:
+        try:
+            return self.assistant.summarize_product(detail)
+        except RuntimeError:
+            return render_product_summary(detail)
+
+    def _export_product_detail(self, detail: ProductDetail) -> None:
+        if not self.export_path and not self.extracted_export_path:
+            return
+        try:
+            if self.export_path:
+                export_product_detail(detail, path=self.export_path)
+            if self.extracted_export_path:
+                export_extracted_product_info(detail, path=self.extracted_export_path)
+        except OSError as exc:
+            logger.warning("pharmacity_export_failed sku=%s error=%s", detail.sku, exc)
 
     def _require_session(self, conversation_id: str | None) -> SearchSession:
         session = self.session_store.get(conversation_id)
@@ -254,7 +326,7 @@ class PharmacityFlow:
             raise FlowDependencyError(f"Could not initialize Gemini client: {exc}") from exc
 
 
-def _parse_text_selection(message: str) -> int | None:
+def parse_product_selection(message: str) -> int | None:
     normalized = normalize_text(message).strip()
     normalized = re.sub(r"\s+", " ", normalized)
 
@@ -295,6 +367,48 @@ def _parse_text_selection(message: str) -> int | None:
         return int(explicit_match.group(1))
 
     return None
+
+
+def _resolve_selection_question(
+    session: SearchSession,
+    user_message: str | None,
+) -> str | None:
+    message = (user_message or "").strip()
+    if message and parse_product_selection(message) is None:
+        return message
+    return session.requested_question or message or None
+
+
+def _should_reuse_pending_selection(session: SearchSession, message: str) -> bool:
+    normalized = normalize_text(message).strip()
+    if not normalized:
+        return True
+
+    if parse_product_selection(message) is not None:
+        return True
+
+    extracted_drug_name = extract_drug_name_local(message)
+    if extracted_drug_name:
+        if normalize_text(extracted_drug_name) != normalize_text(session.drug_name):
+            return False
+        return True
+
+    return any(
+        keyword in normalized
+        for keyword in [
+            "san pham",
+            "thuoc nao",
+            "loai nao",
+            "chon",
+            "gia",
+            "bao nhieu",
+            "thanh phan",
+            "cong dung",
+            "cach dung",
+            "ke don",
+            "xem them",
+        ]
+    )
 
 
 def _log_latency(event: str, started_at: float, **fields: object) -> None:

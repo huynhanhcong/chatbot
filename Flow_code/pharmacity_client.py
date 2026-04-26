@@ -86,7 +86,7 @@ class PharmacityApiClient:
         data = payload.get("data")
         if not isinstance(data, dict) or not isinstance(data.get("item"), dict):
             raise PharmacityParsingError("Missing product item in Pharmacity detail response.")
-        return _parse_detail_item(data["item"])
+        return _parse_detail_item(data["item"], payload=payload)
 
     def close(self) -> None:
         if self._owns_http_client and hasattr(self._http, "close"):
@@ -143,7 +143,7 @@ class PharmacityApiClient:
         return payload
 
 
-def _parse_detail_item(item: dict[str, Any]) -> ProductDetail:
+def _parse_detail_item(item: dict[str, Any], payload: dict[str, Any] | None = None) -> ProductDetail:
     slug = _clean_optional_string(item.get("slug"))
     variants = item.get("variants") if isinstance(item.get("variants"), list) else []
     ingredients = item.get("ingredients") if isinstance(item.get("ingredients"), list) else []
@@ -161,7 +161,12 @@ def _parse_detail_item(item: dict[str, Any]) -> ProductDetail:
         variants=variants,
         is_prescription_drug=bool(item.get("is_prescription_drug")),
         source_url=build_detail_url(slug),
-        raw=item,
+        raw={
+            "api_response": payload,
+            "item": item,
+        }
+        if payload is not None
+        else item,
     )
 
 

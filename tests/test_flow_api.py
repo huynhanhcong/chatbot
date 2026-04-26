@@ -6,7 +6,9 @@ from fastapi.testclient import TestClient
 
 from Flow_code import api
 from Flow_code.conversation_memory import InMemoryConversationStore
+from Flow_code.dialogue_state import InMemoryDialogueStateStore
 from Flow_code.hospital_session import InMemoryHospitalSessionStore
+from Flow_code.session_store import InMemorySessionStore
 
 
 class FakeApiFlow:
@@ -81,6 +83,15 @@ class ContextAwareFakeRagPipeline(FakeRagPipeline):
         return super().answer(question)
 
 
+def _reset_runtime(monkeypatch, *, flow=None, rag=None) -> None:
+    monkeypatch.setattr(api, "_flow", flow)
+    monkeypatch.setattr(api, "_rag_pipeline", rag)
+    monkeypatch.setattr(api, "_conversations", InMemoryConversationStore())
+    monkeypatch.setattr(api, "_hospital_sessions", InMemoryHospitalSessionStore())
+    monkeypatch.setattr(api, "_dialogue_states", InMemoryDialogueStateStore())
+    monkeypatch.setattr(api, "_drug_sessions", InMemorySessionStore())
+
+
 def test_health() -> None:
     client = TestClient(api.app)
 
@@ -98,7 +109,7 @@ def test_root_serves_webapp() -> None:
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "Medical Chatbot" in response.text
+    assert "Trợ lý Bệnh viện Hạnh Phúc" in response.text
 
 
 def test_app_serves_webapp() -> None:
@@ -107,7 +118,7 @@ def test_app_serves_webapp() -> None:
     response = client.get("/app")
 
     assert response.status_code == 200
-    assert "Medical Chatbot" in response.text
+    assert "Trợ lý Bệnh viện Hạnh Phúc" in response.text
 
 
 def test_favicon_returns_no_content() -> None:
@@ -119,7 +130,7 @@ def test_favicon_returns_no_content() -> None:
 
 
 def test_drug_info_single_endpoint_start_and_select(monkeypatch) -> None:
-    monkeypatch.setattr(api, "_flow", FakeApiFlow())
+    _reset_runtime(monkeypatch, flow=FakeApiFlow())
     client = TestClient(api.app)
 
     start = client.post(
@@ -133,12 +144,19 @@ def test_drug_info_single_endpoint_start_and_select(monkeypatch) -> None:
 
     assert start.status_code == 200
     assert start.json()["status"] == "need_selection"
+    assert "detail_url" not in start.json()["options"][0]
     assert select.status_code == 200
     assert select.json()["status"] == "answered"
+    assert select.json()["selected_product"] == {
+        "sku": "P00219",
+        "name": "Thuoc bot Oresol 245 DHG",
+    }
+    assert "source_url" not in select.json()
+    assert "sources" not in select.json()
 
 
 def test_unified_chat_routes_pharmacity_search(monkeypatch) -> None:
-    monkeypatch.setattr(api, "_flow", FakeApiFlow())
+    _reset_runtime(monkeypatch, flow=FakeApiFlow())
     client = TestClient(api.app)
 
     response = client.post(
@@ -151,10 +169,47 @@ def test_unified_chat_routes_pharmacity_search(monkeypatch) -> None:
     assert body["route"] == "pharmacity"
     assert body["status"] == "need_selection"
     assert body["options"][0]["sku"] == "P00219"
+    assert "detail_url" not in body["options"][0]
+    assert body["sources"] == []
+
+
+def test_new_unified_chat_clears_pharmacity_export_files(monkeypatch, tmp_path) -> None:
+    raw_path = tmp_path / "pharmacity.txt"
+    extracted_path = tmp_path / "pharmacity_1.txt"
+    raw_path.write_text("old raw", encoding="utf-8")
+    extracted_path.write_text("old extracted", encoding="utf-8")
+    monkeypatch.setattr(api, "PHARMACITY_EXPORT_PATHS", (raw_path, extracted_path))
+    _reset_runtime(monkeypatch, flow=None, rag=FakeRagPipeline())
+    client = TestClient(api.app)
+
+    response = client.post("/chat", json={"message": "Goi IVF Standard gom gi?"})
+
+    assert response.status_code == 200
+    assert raw_path.read_text(encoding="utf-8") == ""
+    assert extracted_path.read_text(encoding="utf-8") == ""
+
+
+def test_existing_unified_chat_keeps_pharmacity_export_files(monkeypatch, tmp_path) -> None:
+    raw_path = tmp_path / "pharmacity.txt"
+    extracted_path = tmp_path / "pharmacity_1.txt"
+    raw_path.write_text("keep raw", encoding="utf-8")
+    extracted_path.write_text("keep extracted", encoding="utf-8")
+    monkeypatch.setattr(api, "PHARMACITY_EXPORT_PATHS", (raw_path, extracted_path))
+    _reset_runtime(monkeypatch, flow=None, rag=FakeRagPipeline())
+    client = TestClient(api.app)
+
+    response = client.post(
+        "/chat",
+        json={"message": "Goi IVF Standard gom gi?", "conversation_id": "conv-existing"},
+    )
+
+    assert response.status_code == 200
+    assert raw_path.read_text(encoding="utf-8") == "keep raw"
+    assert extracted_path.read_text(encoding="utf-8") == "keep extracted"
 
 
 def test_unified_chat_routes_pharmacity_selection(monkeypatch) -> None:
-    monkeypatch.setattr(api, "_flow", FakeApiFlow())
+    _reset_runtime(monkeypatch, flow=FakeApiFlow())
     client = TestClient(api.app)
 
     response = client.post(
@@ -166,14 +221,16 @@ def test_unified_chat_routes_pharmacity_selection(monkeypatch) -> None:
     body = response.json()
     assert body["route"] == "pharmacity"
     assert body["status"] == "answered"
-    assert body["sources"][0]["url"] == "https://www.pharmacity.vn/oresol-245.html"
+    assert body["sources"] == []
+    assert body["selected_product"] == {
+        "sku": "P00219",
+        "name": "Thuoc bot Oresol 245 DHG",
+    }
+    assert body["source_url"] is None
 
 
 def test_unified_chat_routes_hospital_rag(monkeypatch) -> None:
-    monkeypatch.setattr(api, "_flow", None)
-    monkeypatch.setattr(api, "_rag_pipeline", FakeRagPipeline())
-    monkeypatch.setattr(api, "_conversations", InMemoryConversationStore())
-    monkeypatch.setattr(api, "_hospital_sessions", InMemoryHospitalSessionStore())
+    _reset_runtime(monkeypatch, flow=None, rag=FakeRagPipeline())
     client = TestClient(api.app)
 
     response = client.post("/chat", json={"message": "Goi IVF Standard gom gi?"})
@@ -188,10 +245,7 @@ def test_unified_chat_routes_hospital_rag(monkeypatch) -> None:
 
 def test_unified_chat_hospital_rag_uses_previous_context(monkeypatch) -> None:
     rag = FakeRagPipeline(source_title="Goi kham thai Tam An (Goi kham thai 10-40 tuan)")
-    monkeypatch.setattr(api, "_flow", None)
-    monkeypatch.setattr(api, "_rag_pipeline", rag)
-    monkeypatch.setattr(api, "_conversations", InMemoryConversationStore())
-    monkeypatch.setattr(api, "_hospital_sessions", InMemoryHospitalSessionStore())
+    _reset_runtime(monkeypatch, flow=None, rag=rag)
     client = TestClient(api.app)
 
     start = client.post(
@@ -210,10 +264,7 @@ def test_unified_chat_hospital_rag_uses_previous_context(monkeypatch) -> None:
 
 
 def test_unified_chat_switches_from_pharmacity_session_to_hospital_rag(monkeypatch) -> None:
-    monkeypatch.setattr(api, "_flow", FakeApiFlow())
-    monkeypatch.setattr(api, "_rag_pipeline", FakeRagPipeline())
-    monkeypatch.setattr(api, "_conversations", InMemoryConversationStore())
-    monkeypatch.setattr(api, "_hospital_sessions", InMemoryHospitalSessionStore())
+    _reset_runtime(monkeypatch, flow=FakeApiFlow(), rag=FakeRagPipeline())
     client = TestClient(api.app)
 
     response = client.post(
@@ -226,10 +277,7 @@ def test_unified_chat_switches_from_pharmacity_session_to_hospital_rag(monkeypat
 
 
 def test_unified_chat_switches_from_hospital_rag_to_pharmacity(monkeypatch) -> None:
-    monkeypatch.setattr(api, "_flow", FakeApiFlow())
-    monkeypatch.setattr(api, "_rag_pipeline", FakeRagPipeline())
-    monkeypatch.setattr(api, "_conversations", InMemoryConversationStore())
-    monkeypatch.setattr(api, "_hospital_sessions", InMemoryHospitalSessionStore())
+    _reset_runtime(monkeypatch, flow=FakeApiFlow(), rag=FakeRagPipeline())
     client = TestClient(api.app)
 
     start = client.post("/chat", json={"message": "Goi IVF Standard gom gi?"})
@@ -250,10 +298,7 @@ def test_unified_chat_switches_from_hospital_rag_to_pharmacity(monkeypatch) -> N
 
 def test_unified_chat_passes_conversation_context_to_rag_pipeline(monkeypatch) -> None:
     rag = ContextAwareFakeRagPipeline(source_title="Goi IVF Standard")
-    monkeypatch.setattr(api, "_flow", None)
-    monkeypatch.setattr(api, "_rag_pipeline", rag)
-    monkeypatch.setattr(api, "_conversations", InMemoryConversationStore())
-    monkeypatch.setattr(api, "_hospital_sessions", InMemoryHospitalSessionStore())
+    _reset_runtime(monkeypatch, flow=None, rag=rag)
     client = TestClient(api.app)
 
     start = client.post("/chat", json={"message": "Goi IVF Standard gom gi?"})

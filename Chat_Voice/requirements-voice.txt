@@ -1,0 +1,13 @@
+httpx
+python-dotenv
+
+# Production realtime voice path. Install when wiring LiveKit workers.
+livekit-agents
+livekit-plugins-silero
+livekit-plugins-openai
+livekit-plugins-deepgram
+
+# Optional local/open-source fallbacks documented in README.
+faster-whisper
+transformers
+torch

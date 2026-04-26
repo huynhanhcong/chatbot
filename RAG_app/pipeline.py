@@ -7,7 +7,7 @@ from .config import Settings
 from .data_loader import load_hanhphuc_chunk_documents
 from .entity_linker import HanhPhucEntityLinker, normalize_for_linking
 from .embeddings import GeminiEmbedder
-from .formatter import build_sources
+from .formatter import build_sources, compose_answer_text
 from .gemini_client import GeminiTextClient
 from .guardrails import apply_guardrails
 from .intent import detect_intent
@@ -42,6 +42,9 @@ class RagPipeline:
         question: str,
         conversation_context: str | None = None,
         original_question: str | None = None,
+        memory_context: str | None = None,
+        resolved_entities: list[dict] | None = None,
+        answer_mode: str | None = None,
     ) -> RagAnswer:
         answer_cache_key = _answer_cache_key(
             question=question,
@@ -54,8 +57,14 @@ class RagPipeline:
                 return RagAnswer.model_validate(cached_answer)
 
         started_at = time.perf_counter()
-        intent = detect_intent(question)
-        rewritten_query = self._retrieval_query(question, intent, conversation_context)
+        intent = answer_mode or detect_intent(question)
+        rewritten_query = self._retrieval_query(
+            question,
+            intent,
+            conversation_context,
+            memory_context=memory_context,
+            resolved_entities=resolved_entities,
+        )
         _log_step("hospital_query_prepare", started_at, intent=intent)
 
         entity_links = self.entity_linker.link(rewritten_query)
@@ -73,11 +82,13 @@ class RagPipeline:
             intent=intent,
             contexts=reranked,
             conversation_context=conversation_context,
+            memory_context=memory_context,
         )
         _log_step("hospital_generation", started_at)
 
+        styled = compose_answer_text(generated)
         guarded = apply_guardrails(
-            generated,
+            styled,
             original_question or question,
             has_context=bool(reranked),
         )
@@ -112,13 +123,24 @@ class RagPipeline:
         question: str,
         intent: str,
         conversation_context: str | None,
+        memory_context: str | None = None,
+        resolved_entities: list[dict] | None = None,
     ) -> str:
+        resolved_titles = [
+            str(item.get("title") or "").strip()
+            for item in resolved_entities or []
+            if isinstance(item, dict) and str(item.get("title") or "").strip()
+        ]
+        if resolved_titles:
+            return f"{' ; '.join(resolved_titles[:2])}. {question}"
         if not _needs_llm_rewrite(question, conversation_context):
             return question
         try:
             rewritten = self.gemini.rewrite_query(question, intent)
         except Exception:
             return question
+        if rewritten and memory_context:
+            return f"{rewritten}\n{memory_context}"
         return rewritten or question
 
     def _retrieve_with_cache(
@@ -186,6 +208,7 @@ class RagPipeline:
         intent: str,
         contexts: list[SearchResult],
         conversation_context: str | None = None,
+        memory_context: str | None = None,
     ) -> str:
         if not contexts:
             return ""
@@ -198,18 +221,28 @@ class RagPipeline:
             if conversation_context and conversation_context.strip()
             else ""
         )
+        memory_block = (
+            f"MEMORY_RESOLUTION:\n{memory_context}\n\n"
+            if memory_context and memory_context.strip()
+            else ""
+        )
         prompt = (
             "Bạn là trợ lý RAG cho Bệnh viện Đa khoa Quốc tế Hạnh Phúc.\n"
             "Quy tắc bắt buộc:\n"
             "- Chỉ trả lời dựa trên CONTEXT.\n"
+            "- Nếu MEMORY_RESOLUTION có resolved_reference, phải trả lời đúng item đó.\n"
+            "- Nếu Intent là compare_question, chỉ so sánh các item đã resolve và có trong CONTEXT.\n"
             "- Dùng LICH_SU_HOI_THOAI chỉ để hiểu đại từ, chủ đề và câu hỏi tiếp nối.\n"
             "- Nếu CONTEXT không có thông tin, nói rõ chưa có thông tin trong dữ liệu hiện tại.\n"
-            "- Không chẩn đoán chắc chắn, không kê đơn, không tự thêm giá/dịch vụ ngoài context.\n"
-            "- Trả lời ngắn gọn, rõ ràng, tiếng Việt.\n\n"
+            "- Không chẩn đoán chắc chắn, không kê đơn, không tự thêm giá hoặc dịch vụ ngoài context.\n"
+            "- Trả lời tự nhiên, ngắn gọn, tiếng Việt.\n"
+            "- Câu đầu tiên phải trả lời trực tiếp đúng ý người dùng hỏi.\n"
+            "- Tối đa 2 đoạn ngắn. Không nhắc đến CONTEXT, nguồn, độ tin cậy, hay các câu như 'theo thông tin được cung cấp'.\n\n"
             f"Intent: {intent}\n"
             f"Câu hỏi người dùng: {question}\n"
             f"Câu hỏi độc lập dùng để truy xuất: {retrieval_question}\n\n"
             f"{history_block}"
+            f"{memory_block}"
             f"CONTEXT:\n{context_text}\n\n"
             "Câu trả lời:"
         )
@@ -231,20 +264,33 @@ def _needs_llm_rewrite(question: str, conversation_context: str | None) -> bool:
     if not conversation_context or not conversation_context.strip():
         return False
     normalized = normalize_for_linking(question)
-    if len(normalized.split()) <= 4:
-        return True
     return any(
         phrase in normalized
         for phrase in [
             "goi nay",
+            "goi do",
             "bac si do",
             "bac si nay",
             "dich vu nay",
+            "dich vu do",
+            "nguoi dau tien",
+            "nguoi thu hai",
+            "bac si kia",
+            "goi dau tien",
+            "goi thu hai",
+            "loai dau tien",
+            "loai thu hai",
+            "khac gi",
+            "so sanh",
             "gia bao nhieu",
             "bao nhieu tien",
             "chi phi",
             "o tren",
             "vua roi",
+            "cai nay",
+            "muc nay",
+            "co gi",
+            "gom gi",
         ]
     )
 

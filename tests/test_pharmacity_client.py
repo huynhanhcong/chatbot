@@ -62,6 +62,8 @@ def test_fetch_product_detail_parses_html_description() -> None:
     assert "Dùng trong điều trị mất nước" in (detail.long_description or "")
     assert "Pha 1 gói vào 200 ml" in (detail.long_description or "")
     assert detail.source_url and detail.source_url.endswith(".html")
+    assert detail.raw["api_response"]["data"]["item"]["sku"] == "P00219"
+    assert detail.raw["item"]["long_description"].startswith("<p>")
 
 
 def _load_fixture(name: str) -> dict:

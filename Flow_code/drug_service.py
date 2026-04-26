@@ -44,6 +44,22 @@ class DrugInfoService:
         )
         return pharmacity_envelope(response)
 
+    def handle_public(
+        self,
+        *,
+        message: str,
+        conversation_id: str | None = None,
+        selected_index: int | None = None,
+        selected_sku: str | None = None,
+    ) -> dict[str, Any]:
+        response = self.handle_raw(
+            message=message,
+            conversation_id=conversation_id,
+            selected_index=selected_index,
+            selected_sku=selected_sku,
+        )
+        return public_pharmacity_response(response)
+
     def get_session(self, conversation_id: str | None) -> Any | None:
         if not conversation_id:
             return None
@@ -59,17 +75,28 @@ class DrugInfoService:
         return None
 
 
+def public_pharmacity_response(response: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": response.get("status"),
+        "conversation_id": response.get("conversation_id"),
+        "message": response.get("message"),
+        "options": _public_options(response.get("options")),
+        "answer": response.get("answer"),
+        "selected_product": _public_selected_product(response.get("selected_product")),
+    }
+
+
 def pharmacity_envelope(response: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": response.get("status"),
         "route": "pharmacity",
         "conversation_id": response.get("conversation_id"),
         "message": response.get("message"),
-        "options": response.get("options", []),
+        "options": _public_options(response.get("options")),
         "answer": response.get("answer"),
-        "sources": pharmacity_sources(response),
-        "selected_product": response.get("selected_product"),
-        "source_url": response.get("source_url"),
+        "sources": [],
+        "selected_product": _public_selected_product(response.get("selected_product")),
+        "source_url": None,
     }
 
 
@@ -84,3 +111,30 @@ def pharmacity_sources(response: dict[str, Any]) -> list[dict[str, str | None]]:
             "url": source_url,
         }
     ]
+
+
+def _public_options(options: Any) -> list[dict[str, Any]]:
+    public_options: list[dict[str, Any]] = []
+    for option in options or []:
+        if not isinstance(option, dict):
+            continue
+        public_options.append(
+            {
+                "index": option.get("index"),
+                "sku": option.get("sku"),
+                "name": option.get("name"),
+                "brand": option.get("brand"),
+                "price": option.get("price"),
+                "image_url": option.get("image_url"),
+            }
+        )
+    return public_options
+
+
+def _public_selected_product(selected_product: Any) -> dict[str, Any] | None:
+    if not isinstance(selected_product, dict):
+        return None
+    return {
+        "sku": selected_product.get("sku"),
+        "name": selected_product.get("name"),
+    }
