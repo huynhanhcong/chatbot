@@ -5,13 +5,19 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest_tmp*/
+tmp_pytest*/
 .runtime/
+test-results/
 
 .venv/
 venv/
 node_modules/
 
 *.log
+tmp-*.png
+robot-settings-current.png
+pharmacity*.txt
 transcript.txt
 
 Data_Hug/

@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mobile Robot Y tế</title>
+    <link rel="stylesheet" href="/robot/static/styles.css?v=robot-modern-2" />
+  </head>
+  <body>
+    <main class="robot-frame" aria-label="Mobile robot bệnh viện">
+      <section id="homeScreen" class="screen home-screen is-active" data-screen="home">
+        <header class="home-header">
+          <div class="brand-lockup">
+            <span class="brand-logo">
+              <img src="/robot/static/assets/Icon/logo-3i.png" alt="" data-optional-icon />
+            </span>
+            <div>
+              <h1>Mobile robot y tế</h1>
+              <p>Hỗ trợ lấy thuốc và tư vấn thông tin tại bệnh viện</p>
+            </div>
+          </div>
+          <div class="time-card" aria-live="polite">
+            <span class="time-label">Thời gian</span>
+            <strong id="clockText">--:--</strong>
+            <small id="dateText">--/--/----</small>
+          </div>
+        </header>
+
+        <section class="home-main" aria-label="Tác vụ chính">
+          <div class="home-copy">
+            <p class="home-label">Sẵn sàng phục vụ</p>
+            <h2>Chọn nhu cầu của bạn</h2>
+            <p>Robot sẽ hướng dẫn từng bước, hỗ trợ nhập mã lấy thuốc, quét QR và đàm thoại với trợ lý AI.</p>
+          </div>
+
+          <button id="medicineButton" class="medicine-cta" type="button">
+            <span class="cta-icon">
+              <img src="/robot/static/assets/Icon/QR.png" alt="" data-optional-icon />
+            </span>
+            <span>
+              <strong>Lấy thuốc</strong>
+              <small>Nhập mã hoặc quét QR</small>
+            </span>
+          </button>
+        </section>
+
+        <nav class="home-actions" aria-label="Tác vụ phụ">
+          <button id="voiceButton" class="home-tool voice-home-button" type="button" aria-label="Bật đàm thoại AI">
+            <span class="icon-slot voice-icon-slot">
+              <img src="/robot/static/assets/Icon/Mic.png" alt="" data-optional-icon />
+            </span>
+            <span>
+              <strong>Đàm thoại AI</strong>
+              <small>Hỏi bằng giọng nói</small>
+            </span>
+          </button>
+
+          <button id="guideButton" class="home-tool home-tool-left" type="button" aria-label="Mở hướng dẫn">
+            <span class="icon-slot home-icon-slot">
+              <img src="/robot/static/assets/Icon/huong_dan.png" alt="" data-optional-icon />
+            </span>
+            <span>
+              <strong>Hướng dẫn</strong>
+              <small>Xem cách sử dụng</small>
+            </span>
+          </button>
+
+          <button id="doctorButton" class="home-tool home-tool-right" type="button" aria-label="Mở màn bác sĩ">
+            <span class="icon-slot home-icon-slot">
+              <img src="/robot/static/assets/Icon/Doctor.png" alt="" data-optional-icon />
+            </span>
+            <span>
+              <strong>Bác sĩ</strong>
+              <small>Khu vực chuyên môn</small>
+            </span>
+          </button>
+
+          <button id="mapButton" class="home-tool map-home-button" type="button" aria-label="Mở bản đồ robot">
+            <span class="icon-slot home-icon-slot map-icon-slot">
+              <img src="/robot/static/assets/Icon/Khung.png" alt="" data-optional-icon />
+              <span class="map-icon-fallback" aria-hidden="true">MAP</span>
+            </span>
+            <span>
+              <strong>Map</strong>
+              <small>Vị trí robot realtime</small>
+            </span>
+          </button>
+        </nav>
+      </section>
+
+      <section id="guideListScreen" class="screen guide-list-screen" data-screen="guide-list" aria-label="Hướng dẫn sử dụng">
+        <div class="screen-panel guide-panel">
+          <button class="close-button" type="button" data-close aria-label="Đóng hướng dẫn">
+            <img src="/robot/static/assets/Icon/Close.png" alt="" data-optional-icon />
+            <span aria-hidden="true">×</span>
+          </button>
+          <header class="screen-header">
+            <p>Hướng dẫn sử dụng</p>
+            <h2>Chọn nội dung cần xem</h2>
+          </header>
+          <div class="guide-options">
+            <button type="button" data-guide-title="Hướng dẫn lấy thuốc">
+              <span class="icon-slot play-icon-slot" aria-hidden="true">
+                <img src="/robot/static/assets/Icon/Play.png" alt="" data-optional-icon />
+              </span>
+              <span>Hướng dẫn lấy thuốc</span>
+            </button>
+            <button type="button" data-guide-title="Hướng dẫn đàm thoại với AI">
+              <span class="icon-slot play-icon-slot" aria-hidden="true">
+                <img src="/robot/static/assets/Icon/Play.png" alt="" data-optional-icon />
+              </span>
+              <span>Hướng dẫn đàm thoại với AI</span>
+            </button>
+            <button type="button" data-guide-title="Hướng dẫn quét mã QR">
+              <span class="icon-slot play-icon-slot" aria-hidden="true">
+                <img src="/robot/static/assets/Icon/Play.png" alt="" data-optional-icon />
+              </span>
+              <span>Hướng dẫn quét mã QR</span>
+            </button>
+            <button type="button" data-guide-title="Hướng dẫn nhập mã lấy thuốc">
+              <span class="icon-slot play-icon-slot" aria-hidden="true">
+                <img src="/robot/static/assets/Icon/Play.png" alt="" data-optional-icon />
+              </span>
+              <span>Hướng dẫn nhập mã lấy thuốc</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section id="guideDetailScreen" class="screen guide-detail-screen" data-screen="guide-detail" aria-label="Chi tiết hướng dẫn">
+        <div class="screen-panel video-panel">
+          <button class="close-button" type="button" data-close aria-label="Đóng video hướng dẫn">
+            <img src="/robot/static/assets/Icon/Close.png" alt="" data-optional-icon />
+            <span aria-hidden="true">×</span>
+          </button>
+          <header class="screen-header">
+            <p>Video hướng dẫn</p>
+            <h2 id="guideDetailTitle">Hướng dẫn lấy thuốc</h2>
+          </header>
+          <div class="video-placeholder" role="img" aria-label="Khu vực video hướng dẫn">
+            <span class="video-play-mark">
+              <img src="/robot/static/assets/Icon/Play.png" alt="" data-optional-icon />
+            </span>
+            <span>Video hướng dẫn</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="medicineChoiceScreen" class="screen medicine-choice-screen" data-screen="medicine" aria-label="Lấy thuốc">
+        <button class="close-button floating-close" type="button" data-close aria-label="Đóng lấy thuốc">
+          <img src="/robot/static/assets/Icon/Close.png" alt="" data-optional-icon />
+          <span aria-hidden="true">×</span>
+        </button>
+        <header class="screen-header centered">
+          <p>Chọn cách lấy thuốc</p>
+          <h2>Lấy thuốc</h2>
+        </header>
+        <p id="medicineError" class="screen-error" role="alert" hidden></p>
+        <div class="medicine-actions">
+          <button id="manualMedicineButton" class="medicine-action" type="button" aria-label="Nhập mã lấy thuốc">
+            <span class="icon-slot medicine-icon-slot">
+              <img src="/robot/static/assets/Icon/Data.png" alt="" data-optional-icon />
+            </span>
+            <span>
+              <strong>Nhập mã</strong>
+              <small>Dùng bàn phím số</small>
+            </span>
+          </button>
+          <button id="qrMedicineButton" class="medicine-action" type="button" aria-label="Quét QR lấy thuốc">
+            <span class="icon-slot medicine-icon-slot">
+              <img src="/robot/static/assets/Icon/QR.png" alt="" data-optional-icon />
+            </span>
+            <span>
+              <strong>Quét QR</strong>
+              <small>Dùng camera của robot</small>
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <section id="manualScreen" class="screen manual-screen" data-screen="manual" aria-label="Nhập mã lấy thuốc">
+        <button class="close-button floating-close" type="button" data-close aria-label="Đóng nhập mã">
+          <img src="/robot/static/assets/Icon/Close.png" alt="" data-optional-icon />
+          <span aria-hidden="true">×</span>
+        </button>
+        <header class="screen-header centered compact">
+          <p>Lấy thuốc</p>
+          <h2>Nhập mã nhận thuốc</h2>
+        </header>
+        <output id="medicineCodeDisplay" class="code-display" aria-label="Mã lấy thuốc"></output>
+        <p id="manualError" class="screen-error manual-error" role="alert" hidden></p>
+        <div class="keypad" aria-label="Bàn phím nhập mã">
+          <button type="button" data-digit="1">1</button>
+          <button type="button" data-digit="2">2</button>
+          <button type="button" data-digit="3">3</button>
+          <button type="button" data-digit="4">4</button>
+          <button type="button" data-digit="5">5</button>
+          <button type="button" data-digit="6">6</button>
+          <button type="button" data-digit="7">7</button>
+          <button type="button" data-digit="8">8</button>
+          <button type="button" data-digit="9">9</button>
+          <button class="key-action" type="button" data-action="delete" aria-label="Xóa một số">
+            <img src="/robot/static/assets/Icon/Back.png" alt="" data-optional-icon />
+            <span class="key-fallback">Xóa</span>
+          </button>
+          <button type="button" data-digit="0">0</button>
+          <button class="key-action confirm-key" type="button" data-action="confirm" aria-label="Xác nhận mã">
+            <img src="/robot/static/assets/Icon/Done.png" alt="" data-optional-icon />
+            <span class="key-fallback">OK</span>
+          </button>
+        </div>
+      </section>
+
+      <section id="qrScreen" class="screen qr-screen" data-screen="qr" aria-label="Quét QR lấy thuốc">
+        <button class="close-button floating-close" type="button" data-close aria-label="Đóng quét QR">
+          <img src="/robot/static/assets/Icon/Close.png" alt="" data-optional-icon />
+          <span aria-hidden="true">×</span>
+        </button>
+        <header class="screen-header centered compact">
+          <p>Lấy thuốc</p>
+          <h2>Quét mã QR</h2>
+        </header>
+        <div class="camera-frame">
+          <video id="qrVideo" muted playsinline></video>
+          <div id="cameraPlaceholder" class="camera-placeholder">CAMERA</div>
+        </div>
+        <canvas id="qrCanvas" hidden></canvas>
+        <p id="qrStatus" class="screen-error camera-status" role="status">Đưa mã QR vào giữa khung camera</p>
+        <button id="qrFallbackButton" class="fallback-button" type="button" hidden>Nhập mã thủ công</button>
+      </section>
+
+      <section id="mapScreen" class="screen map-screen" data-screen="map" aria-label="Bản đồ robot">
+        <button class="close-button floating-close" type="button" data-close aria-label="Đóng bản đồ robot">
+          <img src="/robot/static/assets/Icon/Close.png" alt="" data-optional-icon />
+          <span aria-hidden="true">×</span>
+        </button>
+        <header class="screen-header centered compact">
+          <p>Định vị realtime</p>
+          <h2>Bản đồ robot</h2>
+        </header>
+        <div class="map-workspace">
+          <div id="robotMapCanvas" class="map-placeholder" role="img" aria-label="Khu vực bản đồ robot">
+            <div class="map-grid" aria-hidden="true">
+              <span class="map-route route-a"></span>
+              <span class="map-route route-b"></span>
+              <span class="robot-marker"></span>
+            </div>
+            <strong>Chờ dữ liệu bản đồ</strong>
+            <small>ROS2 map và pose sẽ được hiển thị tại đây</small>
+          </div>
+          <aside class="map-status-card" aria-label="Trạng thái bản đồ">
+            <span id="robotMapStatus" class="map-status">Chờ dữ liệu ROS2</span>
+            <p id="robotPoseText">Vị trí robot: --</p>
+          </aside>
+        </div>
+      </section>
+
+      <section id="doctorScreen" class="screen doctor-screen" data-screen="doctor" aria-label="Bác sĩ">
+        <button id="doctorSettingsButton" class="settings-icon doctor-settings-button" type="button" aria-label="Cài đặt bác sĩ">
+          <span class="icon-slot settings-icon-slot">
+            <img src="/robot/static/assets/Icon/Data.png" alt="" data-optional-icon />
+          </span>
+        </button>
+        <button class="close-button floating-close" type="button" data-close aria-label="Đóng bác sĩ">
+          <img src="/robot/static/assets/Icon/Close.png" alt="" data-optional-icon />
+          <span aria-hidden="true">×</span>
+        </button>
+
+        <div class="doctor-dashboard">
+          <header class="screen-header doctor-header">
+            <p>Khu vực bác sĩ</p>
+            <h2>Bác sĩ</h2>
+            <span id="doctorArduinoStatus" class="doctor-inline-status">Arduino: chờ kết nối</span>
+          </header>
+
+          <div class="doctor-layout">
+            <section class="doctor-card doctor-control-panel" aria-label="Điều khiển robot">
+              <div class="doctor-card-heading">
+                <span class="doctor-symbol compact">
+                  <img src="/robot/static/assets/Icon/Doctor.png" alt="" data-optional-icon />
+                </span>
+                <div>
+                  <p>Điều khiển nhanh</p>
+                  <h3>Robot cấp thuốc</h3>
+                </div>
+              </div>
+
+              <div class="doctor-status-grid" aria-label="Trạng thái thiết bị">
+                <div class="doctor-status-pill">
+                  <span>Cửa</span>
+                  <strong id="doctorDoorStatus">Đang đóng</strong>
+                </div>
+                <div class="doctor-status-pill">
+                  <span>Khay</span>
+                  <strong id="doctorTrayStatus">Sẵn sàng</strong>
+                </div>
+              </div>
+
+              <div class="excel-upload-card">
+                <input id="excelUploadInput" type="file" accept=".xlsx,.xls,.csv" hidden />
+                <button id="excelUploadButton" class="secondary-command" type="button">Upload Excel</button>
+                <p id="excelUploadStatus">Chưa chọn file tra cứu</p>
+              </div>
+
+              <div class="doctor-action-grid">
+                <button id="doorToggleButton" class="doctor-command-button" type="button">
+                  <span>Cửa thuốc</span>
+                  <strong>Mở cửa</strong>
+                </button>
+                <button id="rotateTrayButton" class="doctor-command-button tray-command" type="button">
+                  <span>Khay thuốc</span>
+                  <strong>Xoay khay</strong>
+                </button>
+              </div>
+            </section>
+
+            <section class="doctor-card doctor-list-panel" aria-label="Danh sách thuốc cần setup">
+              <div class="doctor-list-top">
+                <div>
+                  <p>Danh sách thuốc</p>
+                  <h3>Setup đơn thuốc</h3>
+                </div>
+                <div class="doctor-tabs" role="tablist" aria-label="Chọn danh sách thuốc">
+                  <button id="doctorTabA" class="doctor-tab is-active" type="button" role="tab" aria-selected="true" data-doctor-tab="tabA">List 1</button>
+                  <button id="doctorTabB" class="doctor-tab" type="button" role="tab" aria-selected="false" data-doctor-tab="tabB">List 2</button>
+                </div>
+              </div>
+              <div id="doctorMedicineRows" class="doctor-medicine-rows" role="list"></div>
+            </section>
+          </div>
+        </div>
+
+        <section id="settingsPanel" class="settings-panel" role="dialog" aria-modal="true" aria-label="Cài đặt bác sĩ" hidden>
+          <div class="settings-dialog">
+            <header class="settings-header">
+              <p>Cấu hình hệ thống</p>
+              <h3>Cài đặt bác sĩ</h3>
+            </header>
+
+            <form id="doctorSettingsForm" class="settings-form">
+              <div class="settings-grid">
+                <section class="settings-section settings-section-api" aria-label="Cài đặt API AI">
+                  <div class="settings-section-title">
+                    <p>API AI</p>
+                    <strong>Nhà cung cấp & model</strong>
+                  </div>
+                  <label class="settings-field">
+                    <span>Nhà cung cấp</span>
+                    <select id="apiProviderSelect">
+                      <option value="chatgpt">ChatGPT</option>
+                      <option value="gemini">Gemini</option>
+                    </select>
+                  </label>
+                  <label class="settings-field">
+                    <span>Model</span>
+                    <select id="apiModelSelect"></select>
+                  </label>
+                  <label class="settings-field">
+                    <span>API endpoint</span>
+                    <input id="apiBaseUrlInput" type="url" placeholder="http://localhost:8000" autocomplete="off" />
+                  </label>
+                  <label class="settings-field">
+                    <span>API key</span>
+                    <input id="apiKeyInput" type="password" placeholder="Nhập API key" autocomplete="off" />
+                  </label>
+                </section>
+
+                <section class="settings-section settings-section-sound" aria-label="Cài đặt âm thanh">
+                  <div class="settings-section-title">
+                    <p>Âm thanh</p>
+                    <strong>Âm lượng robot</strong>
+                  </div>
+                  <label class="settings-field volume-field">
+                    <span>Âm lượng <strong id="volumeValue">70%</strong></span>
+                    <input id="volumeRange" type="range" min="0" max="100" step="5" />
+                  </label>
+                </section>
+
+                <section class="settings-section settings-section-arduino" aria-label="Cài đặt Arduino">
+                  <div class="settings-section-title">
+                    <p>Arduino</p>
+                    <strong>Cửa và khay thuốc</strong>
+                  </div>
+                  <label class="settings-field">
+                    <span>Arduino port</span>
+                    <input id="arduinoPortInput" type="text" placeholder="COM3" autocomplete="off" />
+                  </label>
+                  <label class="settings-field">
+                    <span>Baud rate</span>
+                    <input id="arduinoBaudRateInput" type="number" min="9600" step="9600" placeholder="115200" />
+                  </label>
+                  <label class="settings-field">
+                    <span>Timeout lệnh (ms)</span>
+                    <input id="arduinoTimeoutInput" type="number" min="500" step="100" placeholder="3000" />
+                  </label>
+                </section>
+              </div>
+
+              <footer class="settings-actions">
+                <button id="closeSettingsButton" class="cancel-settings-button" type="button">Đóng</button>
+                <button class="save-settings-button" type="submit">Lưu cài đặt</button>
+              </footer>
+            </form>
+          </div>
+        </section>
+      </section>
+
+      <section id="loadingScreen" class="screen loading-screen" data-screen="loading" aria-label="Đang lấy thuốc">
+        <button class="close-button floating-close" type="button" data-close aria-label="Hủy lấy thuốc">
+          <img src="/robot/static/assets/Icon/Close.png" alt="" data-optional-icon />
+          <span aria-hidden="true">×</span>
+        </button>
+        <header class="screen-header centered">
+          <p>Lấy thuốc</p>
+          <h2>Đang xử lý yêu cầu</h2>
+        </header>
+        <div class="spinner" aria-hidden="true">
+          <span></span><span></span><span></span><span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+        <p class="loading-status">Vui lòng chờ trong giây lát</p>
+      </section>
+    </main>
+
+    <section id="voiceOverlay" class="voice-overlay" role="dialog" aria-modal="true" aria-label="Đàm thoại với AI" hidden>
+      <button id="closeVoiceButton" class="voice-close-button" type="button" aria-label="Tắt đàm thoại">
+        <img src="/robot/static/assets/Icon/Close.png" alt="" data-optional-icon />
+        <span aria-hidden="true">×</span>
+      </button>
+      <div class="voice-stage">
+        <div id="voiceEmoji" class="voice-emoji" data-expression="happy" aria-hidden="true">
+          <div class="bot-face">
+            <span class="bot-brow bot-brow-left"></span>
+            <span class="bot-brow bot-brow-right"></span>
+            <span class="bot-expression-mark bot-expression-mark-left"></span>
+            <span class="bot-expression-mark bot-expression-mark-right"></span>
+            <span class="bot-cheek bot-cheek-left"></span>
+            <span class="bot-cheek bot-cheek-right"></span>
+            <div class="bot-eye bot-eye-left">
+              <span class="bot-pupil"></span>
+            </div>
+            <div class="bot-eye bot-eye-right">
+              <span class="bot-pupil"></span>
+            </div>
+            <span class="bot-mouth"></span>
+          </div>
+        </div>
+        <div id="medicineClassGrid" class="medicine-class-grid" aria-label="Chọn thuốc cần hỏi" hidden></div>
+        <p id="voiceStatus" class="voice-status" aria-live="polite">Sẵn sàng nghe</p>
+        <p id="voiceTranscript" class="voice-transcript" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <script src="/robot/static/app.js?v=robot-modern-2" defer></script>
+  </body>
+</html>

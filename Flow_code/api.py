@@ -5,10 +5,16 @@ import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
+from Flow_code.arduino_service import (
+    ArduinoBusyError,
+    ArduinoDispenseError,
+    ArduinoDispenseService,
+    ArduinoTimeoutError,
+)
 from Flow_code.chat_orchestrator import ChatOrchestrator
 from Flow_code.conversation_memory import InMemoryConversationStore, RedisConversationStore
 from Flow_code.dialogue_state import InMemoryDialogueStateStore, RedisDialogueStateStore
@@ -47,6 +53,8 @@ from RAG_app.config import ROOT, load_settings
 
 WEB_APP_DIR = ROOT / "Web_app"
 CHAT_VOICE_WEB_DIR = ROOT / "Chat_Voice" / "web"
+ROBOT_WEB_DIR = ROOT / "Web_new"
+ROBOT_LEGACY_WEB_DIR = ROOT / "Web_robot"
 SPEED_LOG_PATHS = {"/chat", "/chat/drug-info"}
 PHARMACITY_EXPORT_PATHS = (
     DEFAULT_PHARMACITY_EXPORT_PATH,
@@ -60,10 +68,15 @@ if WEB_APP_DIR.exists():
     app.mount("/static", StaticFiles(directory=WEB_APP_DIR), name="static")
 if CHAT_VOICE_WEB_DIR.exists():
     app.mount("/voice/static", StaticFiles(directory=CHAT_VOICE_WEB_DIR), name="voice-static")
+if ROBOT_WEB_DIR.exists():
+    app.mount("/robot/static", StaticFiles(directory=ROBOT_WEB_DIR), name="robot-static")
+if ROBOT_LEGACY_WEB_DIR.exists():
+    app.mount("/robot-legacy/static", StaticFiles(directory=ROBOT_LEGACY_WEB_DIR), name="robot-legacy-static")
 
 _flow: PharmacityFlow | None = None
 _rag_pipeline: Any | None = None
 _settings = load_settings()
+_arduino_service = ArduinoDispenseService.from_env()
 
 
 def _build_conversation_store() -> Any:
@@ -113,6 +126,18 @@ class ChatRequest(BaseModel):
 
 
 DrugInfoRequest = ChatRequest
+
+
+class RobotDispenseRequest(BaseModel):
+    code: str = Field(..., min_length=1)
+    source: str = Field(default="manual", min_length=1)
+
+
+class VoiceMetricRequest(BaseModel):
+    metric: str = Field(..., min_length=1)
+    elapsed_ms: float = Field(..., ge=0)
+    conversation_id: str | None = None
+    label: str | None = None
 
 
 @app.middleware("http")
@@ -208,9 +233,52 @@ def voice_app() -> FileResponse:
     return FileResponse(index_path, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/robot")
+def robot_app() -> FileResponse:
+    index_path = ROBOT_WEB_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Robot app not found.")
+    return FileResponse(index_path, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/robot-legacy")
+def robot_legacy_app() -> HTMLResponse:
+    index_path = ROBOT_LEGACY_WEB_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Robot legacy app not found.")
+    html = index_path.read_text(encoding="utf-8").replace("/robot/static/", "/robot-legacy/static/")
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon() -> Response:
     return Response(status_code=204)
+
+
+@app.post("/robot/api/medicine/dispense")
+def robot_dispense_medicine(payload: RobotDispenseRequest) -> dict[str, str]:
+    try:
+        return _arduino_service.dispense(code=payload.code, source=payload.source)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ArduinoBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ArduinoTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except ArduinoDispenseError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/robot/api/voice-metrics")
+def robot_voice_metrics(payload: VoiceMetricRequest) -> dict[str, str]:
+    logger.info(
+        "ROBOT VOICE metric=%s elapsed_ms=%.2f conversation_id=%s label=%s",
+        payload.metric,
+        payload.elapsed_ms,
+        payload.conversation_id or "",
+        payload.label or "",
+    )
+    return {"status": "ok"}
 
 
 @app.post("/chat")
