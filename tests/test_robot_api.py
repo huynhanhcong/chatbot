@@ -64,19 +64,6 @@ def test_robot_static_styles_include_hub_and_settings_layout() -> None:
     assert ".voice-overlay" in response.text
 
 
-def test_robot_legacy_route_serves_old_web_app() -> None:
-    client = TestClient(api.app)
-
-    response = client.get("/robot-legacy")
-
-    assert response.status_code == 200
-    assert "text/html" in response.headers["content-type"]
-    assert "Mobile robot" in response.text
-    assert "/robot-legacy/static/app.js" in response.text
-    assert 'id="homeScreen"' in response.text
-    assert 'id="doctorButton"' in response.text
-
-
 def test_robot_dispense_manual_uses_simulated_service(monkeypatch) -> None:
     monkeypatch.setattr(
         api,
@@ -115,3 +102,11 @@ def test_robot_dispense_qr_uses_simulated_service(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["source"] == "qr"
     assert response.json()["code"] == "QR-ORDER-7"
+
+
+def test_robot_legacy_route_serves_old_web_app() -> None:
+    client = TestClient(api.app)
+
+    response = client.get("/robot-legacy")
+
+    assert response.status_code == 404

@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -51,10 +51,8 @@ from Flow_code.router_service import (
 from RAG_app.config import ROOT, load_settings
 
 
-WEB_APP_DIR = ROOT / "Web_app"
 CHAT_VOICE_WEB_DIR = ROOT / "Chat_Voice" / "web"
 ROBOT_WEB_DIR = ROOT / "Web_new"
-ROBOT_LEGACY_WEB_DIR = ROOT / "Web_robot"
 SPEED_LOG_PATHS = {"/chat", "/chat/drug-info"}
 PHARMACITY_EXPORT_PATHS = (
     DEFAULT_PHARMACITY_EXPORT_PATH,
@@ -64,14 +62,11 @@ PHARMACITY_EXPORT_PATHS = (
 logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Medical Chatbot API", version="0.1.0")
-if WEB_APP_DIR.exists():
-    app.mount("/static", StaticFiles(directory=WEB_APP_DIR), name="static")
 if CHAT_VOICE_WEB_DIR.exists():
     app.mount("/voice/static", StaticFiles(directory=CHAT_VOICE_WEB_DIR), name="voice-static")
 if ROBOT_WEB_DIR.exists():
+    app.mount("/static", StaticFiles(directory=ROBOT_WEB_DIR), name="static")
     app.mount("/robot/static", StaticFiles(directory=ROBOT_WEB_DIR), name="robot-static")
-if ROBOT_LEGACY_WEB_DIR.exists():
-    app.mount("/robot-legacy/static", StaticFiles(directory=ROBOT_LEGACY_WEB_DIR), name="robot-legacy-static")
 
 _flow: PharmacityFlow | None = None
 _rag_pipeline: Any | None = None
@@ -241,15 +236,6 @@ def robot_app() -> FileResponse:
     return FileResponse(index_path, headers={"Cache-Control": "no-store"})
 
 
-@app.get("/robot-legacy")
-def robot_legacy_app() -> HTMLResponse:
-    index_path = ROBOT_LEGACY_WEB_DIR / "index.html"
-    if not index_path.exists():
-        raise HTTPException(status_code=404, detail="Robot legacy app not found.")
-    html = index_path.read_text(encoding="utf-8").replace("/robot/static/", "/robot-legacy/static/")
-    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
-
-
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon() -> Response:
     return Response(status_code=204)
@@ -386,7 +372,7 @@ def _normalize_vi(value: str) -> str:
 
 
 def _index_response() -> FileResponse:
-    index_path = WEB_APP_DIR / "index.html"
+    index_path = ROBOT_WEB_DIR / "index.html"
     if not index_path.exists():
         raise HTTPException(status_code=404, detail="Web app not found.")
     return FileResponse(index_path, headers={"Cache-Control": "no-store"})

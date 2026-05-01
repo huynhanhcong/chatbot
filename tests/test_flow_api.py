@@ -129,6 +129,29 @@ def test_favicon_returns_no_content() -> None:
     assert response.status_code == 204
 
 
+def test_root_serves_webapp() -> None:
+    client = TestClient(api.app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "Mobile robot" in response.text
+    assert "robot-modern-2" in response.text
+    assert "/robot/static/app.js" in response.text
+
+
+def test_app_serves_webapp() -> None:
+    client = TestClient(api.app)
+
+    response = client.get("/app")
+
+    assert response.status_code == 200
+    assert "Mobile robot" in response.text
+    assert "robot-modern-2" in response.text
+    assert "/robot/static/app.js" in response.text
+
+
 def test_drug_info_single_endpoint_start_and_select(monkeypatch) -> None:
     _reset_runtime(monkeypatch, flow=FakeApiFlow())
     client = TestClient(api.app)
